@@ -118,6 +118,20 @@ BEGIN
     END IF;
 END $$;
 
+-- Cambiar UNIQUE constraint: de domain global a (user_id, domain)
+-- Esto permite que varios usuarios scrapeeen el mismo dominio, pero cada uno no duplica
+ALTER TABLE leads DROP CONSTRAINT IF EXISTS leads_domain_key;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint 
+        WHERE conname = 'leads_user_domain_unique'
+    ) THEN
+        ALTER TABLE leads ADD CONSTRAINT leads_user_domain_unique 
+            UNIQUE (user_id, domain);
+    END IF;
+END $$;
+
 -- Índice para búsqueda por usuario
 CREATE INDEX IF NOT EXISTS idx_leads_user ON leads(user_id);
 CREATE INDEX IF NOT EXISTS idx_leads_user_status ON leads(user_id, status);
