@@ -28,7 +28,7 @@ class MailerService:
     - Detailed logging of all operations
     """
 
-    # Default email subject
+    # Default email subject (Railway deploy force: 2026-02-05)
     DEFAULT_SUBJECT = "Tu web está perdiendo clientes - Elevá su nivel ahora"
 
     def __init__(
