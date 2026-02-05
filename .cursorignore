@@ -1,0 +1,39 @@
+# Flutter/Dart: Carpetas de herramientas y compilación
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+build/
+
+# Código Generado (Mantenlo ignorado para que la IA no gaste tokens en código automático)
+*.g.dart
+*.freezed.dart
+*.gr.dart
+*.generated.dart
+*.mocks.dart
+
+# Plataformas Nativas (Ignora si solo trabajas en la capa de Dart/Flutter)
+android/
+ios/
+linux/
+macos/
+windows/
+
+# Seguridad y Configuración (¡IMPORTANTE!)
+.env
+.env.*
+*.pfx
+*.keystore
+
+# Activos y Documentación pesada
+assets/
+docs/
+*.md
+!README.md
+
+# Archivos Temporales y de IDE
+.idea/
+.vscode/
+*.iml
+*.tmp
+*.log
