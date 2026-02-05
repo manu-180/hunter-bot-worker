@@ -29,7 +29,7 @@ class MailerService:
     """
 
     # Default email subject
-    DEFAULT_SUBJECT = "🤖 Tu competencia ya tiene un empleado que nunca duerme"
+    DEFAULT_SUBJECT = "Tu web está perdiendo clientes - Elevá su nivel ahora"
 
     def __init__(
         self,
@@ -448,7 +448,7 @@ class MailerService:
 
         # Default subject with recipient name when available
         if owner_name:
-            return f"🤖 {owner_name}, tu competencia ya tiene un empleado que nunca duerme"
+            return f"{owner_name}, tu web está perdiendo clientes - Elevá su nivel"
         return self.DEFAULT_SUBJECT
 
     async def _human_delay(self) -> None:

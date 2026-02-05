@@ -83,6 +83,7 @@ class DomainHunterWorker:
         self.supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
         self.serpapi_key = SERPAPI_KEY
         self.active_users = {}  # user_id -> config
+        self.search_pagination = {}  # (user_id, ciudad) -> página actual
         
     async def start(self):
         """Inicia el worker daemon."""
@@ -198,7 +199,12 @@ class DomainHunterWorker:
         ciudad = random.choice(ciudades) if ciudades else 'Buenos Aires'
         query = f"{nicho} en {ciudad} {pais}"
         
-        log.info(f"🔍 Buscando en Google vía SerpAPI: \"{query}\"")
+        # Obtener página actual para esta combinación user+ciudad
+        pagination_key = (user_id, ciudad)
+        current_page = self.search_pagination.get(pagination_key, 0)
+        start_result = current_page * 10  # SerpAPI usa "start" (0, 10, 20, 30...)
+        
+        log.info(f"🔍 Buscando en Google vía SerpAPI: \"{query}\" (página {current_page + 1})")
         
         try:
             # Configurar búsqueda con SerpAPI
@@ -208,6 +214,7 @@ class DomainHunterWorker:
                 "hl": "es",
                 "gl": "ar",
                 "num": 20,  # Más resultados = más dominios
+                "start": start_result,  # Paginación: 0, 10, 20, 30...
                 "api_key": self.serpapi_key
             }
             
@@ -243,6 +250,11 @@ class DomainHunterWorker:
                         log.debug(f"  ❌ Filtrado: {domain}")
             
             log.info(f"📈 Revisados: {total_checked} | Filtrados: {total_filtered} | Válidos: {len(domains_found)}")
+            
+            # Incrementar página para la próxima búsqueda en esta ciudad
+            if len(domains_found) > 0:
+                self.search_pagination[pagination_key] = current_page + 1
+                log.info(f"📄 Próxima búsqueda en {ciudad}: página {current_page + 2}")
             
             # Delay antes de la siguiente búsqueda
             delay = random.randint(MIN_DELAY_BETWEEN_SEARCHES, MAX_DELAY_BETWEEN_SEARCHES)
