@@ -40,7 +40,7 @@ class LeadSniperWorker:
     def __init__(
         self,
         scrape_batch_size: int = 10,  # ⚡ Aumentado de 5 a 10 dominios por batch
-        email_batch_size: int = 8,    # ⚡ Aumentado de 5 a 8 emails por batch
+        email_batch_size: int = 10,   # ⚡ Aumentado de 8 a 10 emails por batch
         idle_sleep_seconds: int = 10,
         heartbeat_interval: int = 60
     ) -> None:

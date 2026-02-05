@@ -35,14 +35,14 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")  # service_role key
 SERPAPI_KEY = os.getenv("SERPAPI_KEY")  # SerpAPI key para búsquedas
 
 # Delays para evitar bloqueo (en segundos)
-MIN_DELAY_BETWEEN_SEARCHES = 30  # Mínimo 30s entre búsquedas
-MAX_DELAY_BETWEEN_SEARCHES = 90  # Máximo 90s entre búsquedas
+MIN_DELAY_BETWEEN_SEARCHES = 3  # Reducido de 30s a 3s (SerpAPI protege contra bloqueos)
+MAX_DELAY_BETWEEN_SEARCHES = 10  # Reducido de 90s a 10s
 
 # Cada cuánto checar por usuarios con bot enabled (en segundos)
 CHECK_USERS_INTERVAL = 60  # 1 minuto
 
 # Batch size: cuántos dominios agregar a la vez
-DOMAIN_BATCH_SIZE = 5
+DOMAIN_BATCH_SIZE = 10  # Aumentado de 5 a 10 para mayor throughput
 
 # User Agents para rotar
 USER_AGENTS = [
@@ -59,6 +59,107 @@ BLACKLIST_DOMAINS = {
     'mercadolibre', 'olx', 'zonaprop', 'argenprop', 'properati',
     'wikipedia', 'wikidata', 'pinterest', 'tiktok',
 }
+
+# =============================================================================
+# LISTAS DE ROTACIÓN AUTOMÁTICA
+# =============================================================================
+
+# 50+ nichos con potencial de email y ventas
+NICHOS = [
+    # Servicios profesionales
+    "inmobiliarias", "estudios contables", "estudios juridicos", "agencias de marketing",
+    "consultoras", "agencias de diseño", "estudios de arquitectura", "desarrolladores web",
+    "consultoras IT", "agencias SEO", "agencias de publicidad",
+    
+    # Servicios locales
+    "gimnasios", "centros de estetica", "peluquerias", "spa", "clinicas dentales",
+    "clinicas veterinarias", "talleres mecanicos", "lavaderos de autos", "cerrajerias",
+    "empresas de limpieza", "empresas de mudanzas", "empresas de seguridad",
+    
+    # Retail y comercio
+    "tiendas de ropa", "joyerias", "opticas", "librerias", "jugueterias",
+    "ferreterias", "viveros", "pet shops", "tiendas de deportes",
+    
+    # Gastronomía
+    "restaurantes", "cafeterias", "panaderias", "pizzerias", "hamburgueserias",
+    "heladerias", "bares", "catering",
+    
+    # Salud y bienestar
+    "centros medicos", "laboratorios", "kinesiologos", "nutricionistas",
+    "psicologos", "centros de yoga", "centros de pilates",
+    
+    # Educación
+    "institutos de idiomas", "academias de arte", "escuelas de musica",
+    "centros de capacitacion", "guarderias",
+    
+    # Otros
+    "hoteles", "hostels", "agencias de turismo", "rent a car", "fotografos",
+    "organizadores de eventos", "floristas", "imprentas", "graficas"
+]
+
+# Ciudades principales de países latinoamericanos de habla hispana
+CIUDADES_POR_PAIS = {
+    "Argentina": [
+        "Buenos Aires", "Córdoba", "Rosario", "Mendoza", "San Miguel de Tucumán",
+        "La Plata", "Mar del Plata", "Salta", "Santa Fe", "San Juan",
+        "Resistencia", "Neuquén", "Bahía Blanca", "Paraná"
+    ],
+    "México": [
+        "Ciudad de México", "Guadalajara", "Monterrey", "Puebla", "Tijuana",
+        "León", "Juárez", "Zapopan", "Mérida", "Querétaro",
+        "San Luis Potosí", "Aguascalientes", "Hermosillo", "Saltillo"
+    ],
+    "Colombia": [
+        "Bogotá", "Medellín", "Cali", "Barranquilla", "Cartagena",
+        "Cúcuta", "Bucaramanga", "Pereira", "Santa Marta", "Manizales"
+    ],
+    "Chile": [
+        "Santiago", "Valparaíso", "Concepción", "La Serena", "Antofagasta",
+        "Temuco", "Rancagua", "Talca", "Viña del Mar"
+    ],
+    "Perú": [
+        "Lima", "Arequipa", "Trujillo", "Chiclayo", "Cusco",
+        "Piura", "Iquitos", "Huancayo", "Tacna"
+    ],
+    "Ecuador": [
+        "Quito", "Guayaquil", "Cuenca", "Ambato", "Manta", "Portoviejo"
+    ],
+    "Bolivia": [
+        "La Paz", "Santa Cruz", "Cochabamba", "Sucre", "Tarija"
+    ],
+    "Paraguay": [
+        "Asunción", "Ciudad del Este", "Encarnación", "Pedro Juan Caballero"
+    ],
+    "Uruguay": [
+        "Montevideo", "Salto", "Paysandú", "Maldonado", "Rivera"
+    ],
+    "Venezuela": [
+        "Caracas", "Maracaibo", "Valencia", "Barquisimeto", "Maracay"
+    ],
+    "Costa Rica": [
+        "San José", "Alajuela", "Cartago", "Heredia", "Limón"
+    ],
+    "Panamá": [
+        "Ciudad de Panamá", "Colón", "David", "La Chorrera"
+    ],
+    "Guatemala": [
+        "Ciudad de Guatemala", "Quetzaltenango", "Escuintla", "Antigua Guatemala"
+    ],
+    "Honduras": [
+        "Tegucigalpa", "San Pedro Sula", "Choloma", "La Ceiba"
+    ],
+    "El Salvador": [
+        "San Salvador", "Santa Ana", "San Miguel", "Soyapango"
+    ],
+    "Nicaragua": [
+        "Managua", "León", "Masaya", "Granada"
+    ],
+    "República Dominicana": [
+        "Santo Domingo", "Santiago", "La Romana", "San Pedro de Macorís"
+    ]
+}
+
+PAISES = list(CIUDADES_POR_PAIS.keys())
 
 # =============================================================================
 # LOGGER
@@ -122,7 +223,7 @@ class DomainHunterWorker:
                 
                 # 2. Procesar cada usuario activo
                 for user_id, config in self.active_users.items():
-                    log.info(f"\n🎯 Usuario: {user_id[:8]}... | Nicho: {config['nicho']}")
+                    log.info(f"\n🎯 Usuario: {user_id[:8]}... | Rotación automática activada")
                     
                     # Buscar dominios para este usuario
                     domains = await self._search_domains_for_user(user_id, config)
@@ -175,36 +276,33 @@ class DomainHunterWorker:
     
     async def _search_domains_for_user(self, user_id: str, config: dict) -> List[str]:
         """
-        Busca dominios en Google para un usuario específico usando SerpAPI.
+        Busca dominios usando ROTACIÓN INTELIGENTE de nichos, ciudades y países.
+        Ya no usa la config del usuario (nicho, ciudades, pais) - es 100% automático.
         
         Args:
             user_id: ID del usuario
-            config: Configuración del usuario (nicho, ciudades, pais)
+            config: Configuración del usuario (ignorada, se usa rotación automática)
         
         Returns:
             Lista de dominios encontrados (hasta DOMAIN_BATCH_SIZE)
         """
-        nicho = config.get('nicho', 'inmobiliarias')
-        ciudades = config.get('ciudades', ['Buenos Aires'])
-        pais = config.get('pais', 'Argentina')
+        # 1. Obtener o crear tracking para este usuario
+        tracking = await self._get_next_combination_to_search(user_id)
         
-        # Si ciudades es un string de Postgres array, parsearlo
-        if isinstance(ciudades, str):
-            ciudades = ciudades.replace('{', '').replace('}', '').split(',')
-            ciudades = [c.strip() for c in ciudades if c.strip()]
+        if not tracking:
+            log.warning(f"⚠️  Usuario {user_id[:8]}... no tiene más combinaciones para buscar")
+            return []
         
-        domains_found: Set[str] = set()
+        nicho = tracking['nicho']
+        ciudad = tracking['ciudad']
+        pais = tracking['pais']
+        current_page = tracking['current_page']
         
-        # Generar query de búsqueda
-        ciudad = random.choice(ciudades) if ciudades else 'Buenos Aires'
         query = f"{nicho} en {ciudad} {pais}"
+        start_result = current_page * 10  # SerpAPI paginación
         
-        # Obtener página actual para esta combinación user+ciudad
-        pagination_key = (user_id, ciudad)
-        current_page = self.search_pagination.get(pagination_key, 0)
-        start_result = current_page * 10  # SerpAPI usa "start" (0, 10, 20, 30...)
-        
-        log.info(f"🔍 Buscando en Google vía SerpAPI: \"{query}\" (página {current_page + 1})")
+        log.info(f"🎯 Rotación: {nicho} | {ciudad}, {pais} | Página {current_page + 1}")
+        log.info(f"🔍 Query SerpAPI: \"{query}\"")
         
         try:
             # Configurar búsqueda con SerpAPI
@@ -212,59 +310,52 @@ class DomainHunterWorker:
                 "q": query,
                 "location": f"{ciudad}, {pais}",
                 "hl": "es",
-                "gl": "ar",
-                "num": 20,  # Más resultados = más dominios
-                "start": start_result,  # Paginación: 0, 10, 20, 30...
+                "gl": pais[:2].lower(),  # Código de país (ej: ar, mx, co)
+                "num": 20,
+                "start": start_result,
                 "api_key": self.serpapi_key
             }
             
-            # Ejecutar búsqueda (sincrónica, por eso usamos asyncio.to_thread)
+            # Ejecutar búsqueda
             search = await asyncio.to_thread(GoogleSearch(params).get_dict)
-            
-            # Extraer resultados orgánicos
             organic_results = search.get("organic_results", [])
+            
             log.info(f"📊 SerpAPI devolvió {len(organic_results)} resultados")
             
-            total_checked = 0
-            total_filtered = 0
+            domains_found = set()
             
             for result in organic_results:
                 link = result.get("link")
                 if not link:
                     continue
                 
-                total_checked += 1
-                
-                # Extraer dominio
                 domain = self._extract_domain(link)
-                if domain:
-                    if self._is_valid_domain(domain):
-                        domains_found.add(domain)
-                        log.info(f"  ✅ {domain}")
-                        
-                        # Si llegamos al batch size, parar
-                        if len(domains_found) >= DOMAIN_BATCH_SIZE:
-                            break
-                    else:
-                        total_filtered += 1
-                        log.debug(f"  ❌ Filtrado: {domain}")
+                if domain and self._is_valid_domain(domain):
+                    domains_found.add(domain)
+                    log.info(f"  ✅ {domain}")
+                    
+                    if len(domains_found) >= DOMAIN_BATCH_SIZE:
+                        break
             
-            log.info(f"📈 Revisados: {total_checked} | Filtrados: {total_filtered} | Válidos: {len(domains_found)}")
-            
-            # Incrementar página para la próxima búsqueda en esta ciudad
-            if len(domains_found) > 0:
-                self.search_pagination[pagination_key] = current_page + 1
-                log.info(f"📄 Próxima búsqueda en {ciudad}: página {current_page + 2}")
+            # 2. Actualizar tracking según resultados
+            if len(domains_found) == 0:
+                # No hay más resultados - marcar como agotada y avanzar
+                await self._mark_combination_exhausted(user_id, nicho, ciudad, pais)
+                log.info(f"🏁 Combinación agotada. Rotando a siguiente...")
+            else:
+                # Hay resultados - incrementar página para próxima búsqueda
+                await self._increment_page(user_id, nicho, ciudad, pais, len(domains_found))
+                log.info(f"📄 Próxima búsqueda: página {current_page + 2}")
             
             # Delay antes de la siguiente búsqueda
             delay = random.randint(MIN_DELAY_BETWEEN_SEARCHES, MAX_DELAY_BETWEEN_SEARCHES)
-            log.info(f"⏳ Delay de {delay}s antes de la siguiente búsqueda...")
+            log.info(f"⏳ Delay: {delay}s")
             await asyncio.sleep(delay)
             
             return list(domains_found)
             
         except Exception as e:
-            log.error(f"❌ Error buscando dominios con SerpAPI: {e}")
+            log.error(f"❌ Error en búsqueda SerpAPI: {e}")
             return []
     
     def _extract_domain_from_search_link(self, href: str) -> str | None:
@@ -352,6 +443,212 @@ class DomainHunterWorker:
             
         except Exception as e:
             log.error(f"❌ Error guardando dominios: {e}")
+    
+    # =============================================================================
+    # MÉTODOS DE TRACKING - Sistema de Rotación Inteligente
+    # =============================================================================
+    
+    async def _get_next_combination_to_search(self, user_id: str) -> dict | None:
+        """
+        Obtiene la próxima combinación (nicho, ciudad, país) a buscar.
+        Prioriza combinaciones no agotadas. Si todas están agotadas, resetea.
+        """
+        try:
+            # Buscar combinación no agotada con menor página (para "exprimir" cada una)
+            response = self.supabase.table("domain_search_tracking")\
+                .select("*")\
+                .eq("user_id", user_id)\
+                .eq("is_exhausted", False)\
+                .order("current_page", desc=False)\
+                .limit(1)\
+                .execute()
+            
+            if response.data:
+                return response.data[0]
+            
+            # Si todas están agotadas, resetear y empezar de nuevo
+            log.info(f"🔄 Todas las combinaciones agotadas para {user_id[:8]}. Reseteando...")
+            await self._reset_all_combinations(user_id)
+            
+            # Intentar de nuevo después del reset
+            response = self.supabase.table("domain_search_tracking")\
+                .select("*")\
+                .eq("user_id", user_id)\
+                .eq("is_exhausted", False)\
+                .order("current_page", desc=False)\
+                .limit(1)\
+                .execute()
+            
+            if response.data:
+                return response.data[0]
+            
+            # Si aún no hay, crear la primera combinación
+            return await self._create_first_combination(user_id)
+            
+        except Exception as e:
+            log.error(f"❌ Error obteniendo próxima combinación: {e}")
+            return None
+
+    async def _create_first_combination(self, user_id: str) -> dict | None:
+        """Crea la primera combinación para un usuario nuevo."""
+        try:
+            nicho = random.choice(NICHOS)
+            pais = random.choice(PAISES)
+            ciudad = random.choice(CIUDADES_POR_PAIS[pais])
+            
+            data = {
+                "user_id": user_id,
+                "nicho": nicho,
+                "ciudad": ciudad,
+                "pais": pais,
+                "current_page": 0,
+                "total_domains_found": 0,
+                "is_exhausted": False,
+                "last_searched_at": datetime.utcnow().isoformat()
+            }
+            
+            response = self.supabase.table("domain_search_tracking")\
+                .insert(data)\
+                .execute()
+            
+            return response.data[0] if response.data else None
+            
+        except Exception as e:
+            log.error(f"❌ Error creando primera combinación: {e}")
+            return None
+
+    async def _increment_page(self, user_id: str, nicho: str, ciudad: str, pais: str, domains_found: int):
+        """Incrementa la página para la próxima búsqueda de esta combinación."""
+        try:
+            # Primero obtener el valor actual
+            response = self.supabase.table("domain_search_tracking")\
+                .select("current_page, total_domains_found")\
+                .eq("user_id", user_id)\
+                .eq("nicho", nicho)\
+                .eq("ciudad", ciudad)\
+                .eq("pais", pais)\
+                .execute()
+            
+            if response.data:
+                current_data = response.data[0]
+                new_page = current_data['current_page'] + 1
+                new_total = current_data['total_domains_found'] + domains_found
+                
+                # Actualizar con los nuevos valores
+                self.supabase.table("domain_search_tracking")\
+                    .update({
+                        "current_page": new_page,
+                        "total_domains_found": new_total,
+                        "last_searched_at": datetime.utcnow().isoformat(),
+                        "updated_at": datetime.utcnow().isoformat()
+                    })\
+                    .eq("user_id", user_id)\
+                    .eq("nicho", nicho)\
+                    .eq("ciudad", ciudad)\
+                    .eq("pais", pais)\
+                    .execute()
+        except Exception as e:
+            log.error(f"❌ Error incrementando página: {e}")
+
+    async def _mark_combination_exhausted(self, user_id: str, nicho: str, ciudad: str, pais: str):
+        """Marca una combinación como agotada y crea la siguiente."""
+        try:
+            # Marcar actual como agotada
+            self.supabase.table("domain_search_tracking")\
+                .update({
+                    "is_exhausted": True,
+                    "updated_at": datetime.utcnow().isoformat()
+                })\
+                .eq("user_id", user_id)\
+                .eq("nicho", nicho)\
+                .eq("ciudad", ciudad)\
+                .eq("pais", pais)\
+                .execute()
+            
+            # Crear siguiente combinación
+            await self._create_next_combination(user_id, nicho, ciudad, pais)
+            
+        except Exception as e:
+            log.error(f"❌ Error marcando combinación como agotada: {e}")
+
+    async def _create_next_combination(self, user_id: str, current_nicho: str, current_ciudad: str, current_pais: str):
+        """
+        Crea la siguiente combinación para buscar.
+        Estrategia: rotar ciudad dentro del mismo país/nicho, luego país, luego nicho.
+        """
+        try:
+            # Rotar ciudad dentro del mismo país
+            ciudades = CIUDADES_POR_PAIS[current_pais]
+            current_index = ciudades.index(current_ciudad) if current_ciudad in ciudades else -1
+            
+            if current_index < len(ciudades) - 1:
+                # Siguiente ciudad en el mismo país
+                next_ciudad = ciudades[current_index + 1]
+                next_pais = current_pais
+                next_nicho = current_nicho
+            else:
+                # Cambiar de país
+                pais_index = PAISES.index(current_pais) if current_pais in PAISES else -1
+                
+                if pais_index < len(PAISES) - 1:
+                    # Siguiente país
+                    next_pais = PAISES[pais_index + 1]
+                    next_ciudad = CIUDADES_POR_PAIS[next_pais][0]  # Primera ciudad del nuevo país
+                    next_nicho = current_nicho
+                else:
+                    # Cambiar de nicho y resetear país
+                    nicho_index = NICHOS.index(current_nicho) if current_nicho in NICHOS else -1
+                    next_nicho = NICHOS[(nicho_index + 1) % len(NICHOS)]  # Circular
+                    next_pais = PAISES[0]
+                    next_ciudad = CIUDADES_POR_PAIS[next_pais][0]
+            
+            # Verificar si ya existe
+            existing = self.supabase.table("domain_search_tracking")\
+                .select("id")\
+                .eq("user_id", user_id)\
+                .eq("nicho", next_nicho)\
+                .eq("ciudad", next_ciudad)\
+                .eq("pais", next_pais)\
+                .execute()
+            
+            if not existing.data:
+                # Crear nueva combinación
+                data = {
+                    "user_id": user_id,
+                    "nicho": next_nicho,
+                    "ciudad": next_ciudad,
+                    "pais": next_pais,
+                    "current_page": 0,
+                    "total_domains_found": 0,
+                    "is_exhausted": False,
+                    "last_searched_at": datetime.utcnow().isoformat()
+                }
+                
+                self.supabase.table("domain_search_tracking")\
+                    .insert(data)\
+                    .execute()
+                
+                log.info(f"➕ Nueva combinación: {next_nicho} | {next_ciudad}, {next_pais}")
+            
+        except Exception as e:
+            log.error(f"❌ Error creando siguiente combinación: {e}")
+
+    async def _reset_all_combinations(self, user_id: str):
+        """Resetea todas las combinaciones de un usuario (marca is_exhausted=false, page=0)."""
+        try:
+            self.supabase.table("domain_search_tracking")\
+                .update({
+                    "is_exhausted": False,
+                    "current_page": 0,
+                    "updated_at": datetime.utcnow().isoformat()
+                })\
+                .eq("user_id", user_id)\
+                .execute()
+            
+            log.info(f"🔄 Todas las combinaciones reseteadas para {user_id[:8]}")
+            
+        except Exception as e:
+            log.error(f"❌ Error reseteando combinaciones: {e}")
     
     async def _log_to_user(self, user_id: str, level: str, action: str, domain: str, message: str):
         """Envía un log al usuario en tiempo real."""
