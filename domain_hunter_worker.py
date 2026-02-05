@@ -21,7 +21,7 @@ from typing import List, Set
 from urllib.parse import urlparse, parse_qs
 
 from dotenv import load_dotenv
-from playwright.async_api import async_playwright, Page
+from serpapi import GoogleSearch
 from supabase import create_client, Client
 
 # =============================================================================
@@ -32,6 +32,7 @@ load_dotenv()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")  # service_role key
+SERPAPI_KEY = os.getenv("SERPAPI_KEY")  # SerpAPI key para búsquedas
 
 # Delays para evitar bloqueo (en segundos)
 MIN_DELAY_BETWEEN_SEARCHES = 30  # Mínimo 30s entre búsquedas
@@ -80,8 +81,7 @@ class DomainHunterWorker:
     def __init__(self):
         """Inicializa el worker."""
         self.supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-        self.browser = None
-        self.context = None
+        self.serpapi_key = SERPAPI_KEY
         self.active_users = {}  # user_id -> config
         
     async def start(self):
@@ -90,11 +90,12 @@ class DomainHunterWorker:
         log.info("🔍 DOMAIN HUNTER WORKER - Iniciando")
         log.info("="*60 + "\n")
         
-        # Inicializar Playwright
-        playwright = await async_playwright().start()
-        self.browser = await playwright.chromium.launch(headless=True)
+        if not self.serpapi_key:
+            log.error("❌ SERPAPI_KEY no configurada en .env")
+            log.error("   Consigue tu key gratis en: https://serpapi.com/")
+            return
         
-        log.info("✅ Playwright inicializado")
+        log.info("✅ SerpAPI configurada")
         log.info(f"⏱️  Check de usuarios cada {CHECK_USERS_INTERVAL}s")
         log.info(f"⏱️  Delay entre búsquedas: {MIN_DELAY_BETWEEN_SEARCHES}-{MAX_DELAY_BETWEEN_SEARCHES}s")
         log.info(f"📦 Batch size: {DOMAIN_BATCH_SIZE} dominios\n")
@@ -104,8 +105,6 @@ class DomainHunterWorker:
         except KeyboardInterrupt:
             log.info("\n\n⚠️  Detenido por el usuario")
         finally:
-            if self.browser:
-                await self.browser.close()
             log.info("✅ Worker cerrado correctamente")
     
     async def _main_loop(self):
@@ -128,6 +127,7 @@ class DomainHunterWorker:
                     domains = await self._search_domains_for_user(user_id, config)
                     
                     if domains:
+                        log.info(f"✅ Encontrados {len(domains)} dominios válidos")
                         # Guardar dominios en Supabase
                         await self._save_domains_to_supabase(user_id, domains)
                         
@@ -139,6 +139,8 @@ class DomainHunterWorker:
                             domain="system",
                             message=f"✅ {len(domains)} dominios nuevos agregados a la cola"
                         )
+                    else:
+                        log.warning(f"⚠️  No se encontraron dominios válidos en esta búsqueda")
                     
                     # Delay antes de procesar el siguiente usuario
                     await asyncio.sleep(random.randint(5, 15))
@@ -172,7 +174,7 @@ class DomainHunterWorker:
     
     async def _search_domains_for_user(self, user_id: str, config: dict) -> List[str]:
         """
-        Busca dominios en Google para un usuario específico.
+        Busca dominios en Google para un usuario específico usando SerpAPI.
         
         Args:
             user_id: ID del usuario
@@ -196,37 +198,51 @@ class DomainHunterWorker:
         ciudad = random.choice(ciudades) if ciudades else 'Buenos Aires'
         query = f"{nicho} en {ciudad} {pais}"
         
-        log.info(f"🔍 Buscando: \"{query}\"")
+        log.info(f"🔍 Buscando en Google vía SerpAPI: \"{query}\"")
         
         try:
-            # Crear nuevo contexto con User-Agent aleatorio
-            user_agent = random.choice(USER_AGENTS)
-            context = await self.browser.new_context(user_agent=user_agent)
-            page = await context.new_page()
+            # Configurar búsqueda con SerpAPI
+            params = {
+                "q": query,
+                "location": f"{ciudad}, {pais}",
+                "hl": "es",
+                "gl": "ar",
+                "num": 20,  # Más resultados = más dominios
+                "api_key": self.serpapi_key
+            }
             
-            # Navegar a Google
-            await page.goto(f"https://www.google.com/search?q={query}&hl=es")
-            await asyncio.sleep(random.uniform(2, 4))
+            # Ejecutar búsqueda (sincrónica, por eso usamos asyncio.to_thread)
+            search = await asyncio.to_thread(GoogleSearch(params).get_dict)
             
-            # Extraer links de resultados
-            links = await page.query_selector_all("a")
+            # Extraer resultados orgánicos
+            organic_results = search.get("organic_results", [])
+            log.info(f"📊 SerpAPI devolvió {len(organic_results)} resultados")
             
-            for link in links:
-                href = await link.get_attribute("href")
-                if not href:
+            total_checked = 0
+            total_filtered = 0
+            
+            for result in organic_results:
+                link = result.get("link")
+                if not link:
                     continue
                 
-                # Extraer dominio del link de Google
-                domain = self._extract_domain_from_google_link(href)
-                if domain and self._is_valid_domain(domain):
-                    domains_found.add(domain)
-                    log.info(f"  ✅ {domain}")
-                    
-                    # Si llegamos al batch size, parar
-                    if len(domains_found) >= DOMAIN_BATCH_SIZE:
-                        break
+                total_checked += 1
+                
+                # Extraer dominio
+                domain = self._extract_domain(link)
+                if domain:
+                    if self._is_valid_domain(domain):
+                        domains_found.add(domain)
+                        log.info(f"  ✅ {domain}")
+                        
+                        # Si llegamos al batch size, parar
+                        if len(domains_found) >= DOMAIN_BATCH_SIZE:
+                            break
+                    else:
+                        total_filtered += 1
+                        log.debug(f"  ❌ Filtrado: {domain}")
             
-            await context.close()
+            log.info(f"📈 Revisados: {total_checked} | Filtrados: {total_filtered} | Válidos: {len(domains_found)}")
             
             # Delay antes de la siguiente búsqueda
             delay = random.randint(MIN_DELAY_BETWEEN_SEARCHES, MAX_DELAY_BETWEEN_SEARCHES)
@@ -236,26 +252,29 @@ class DomainHunterWorker:
             return list(domains_found)
             
         except Exception as e:
-            log.error(f"❌ Error buscando dominios: {e}")
+            log.error(f"❌ Error buscando dominios con SerpAPI: {e}")
             return []
     
-    def _extract_domain_from_google_link(self, href: str) -> str | None:
+    def _extract_domain_from_search_link(self, href: str) -> str | None:
         """
-        Extrae el dominio real de un link de resultados de Google.
+        Extrae el dominio real de un link de resultados de búsqueda.
         
-        Google wrappea los links en URLs como:
-        /url?q=https://example.com&sa=...
+        DuckDuckGo usa links directos, no como Google que wrappea.
         """
         if not href:
             return None
         
-        # Si es un link de Google Search (/url?q=...)
-        if href.startswith('/url?'):
-            parsed = urlparse(href)
-            params = parse_qs(parsed.query)
-            if 'q' in params:
-                actual_url = params['q'][0]
-                return self._extract_domain(actual_url)
+        # DuckDuckGo puede tener links tipo //duckduckgo.com/l/?uddg=...
+        # En ese caso, extraer el parámetro uddg
+        if 'duckduckgo.com/l/' in href:
+            try:
+                parsed = urlparse(href if href.startswith('http') else f'https:{href}')
+                params = parse_qs(parsed.query)
+                if 'uddg' in params:
+                    actual_url = params['uddg'][0]
+                    return self._extract_domain(actual_url)
+            except:
+                pass
         
         # Si es un link directo
         return self._extract_domain(href)
