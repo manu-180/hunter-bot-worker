@@ -88,7 +88,7 @@ class HunterConfig(BaseModel):
     """
     Configuration for HunterBot per user.
     
-    Stores Resend API credentials and email settings.
+    Stores Resend API credentials, email settings, and bot control.
     """
     id: UUID
     user_id: UUID
@@ -98,6 +98,13 @@ class HunterConfig(BaseModel):
     calendar_link: Optional[str] = None
     email_subject: Optional[str] = None
     is_active: bool = False
+    
+    # Bot control
+    bot_enabled: bool = False
+    nicho: str = "inmobiliarias"
+    ciudades: list[str] = Field(default_factory=lambda: ["Buenos Aires", "Córdoba", "Rosario"])
+    pais: str = "Argentina"
+    
     created_at: datetime
     updated_at: datetime
     

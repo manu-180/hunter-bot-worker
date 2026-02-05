@@ -108,6 +108,33 @@ O mediante el Dashboard de Supabase.
 
 ---
 
+## 🎯 Domain Hunter - Conseguir miles de dominios automáticamente
+
+Para facilitar la obtención masiva de dominios, incluimos `domain_hunter.py`: un script que busca en Google 24/7 con delays largos para evitar bloqueos.
+
+### Uso rápido
+
+1. **Editar configuración:**
+   ```bash
+   # Abrir domain_hunter_config.py y configurar:
+   NICHO = "inmobiliarias"  # Tu nicho
+   CIUDADES = ["Rosario", "Buenos Aires", "Córdoba"]
+   USER_ID = None  # Tu user_id para guardar en Supabase automáticamente
+   ```
+
+2. **Ejecutar:**
+   ```bash
+   python domain_hunter.py
+   ```
+
+3. **Dejar corriendo:** El script hace búsquedas cada 30-90 segundos, puede correr durante horas/días acumulando miles de dominios.
+
+4. **Resultado:** Genera `domains_[nicho]_[fecha].txt` con todos los dominios encontrados.
+
+**Estimación:** Corriendo 8 horas → 2000-5000 dominios
+
+---
+
 ## 🚀 Deployment en Producción (Railway)
 
 Para que los usuarios de Botslode NO tengan que ejecutar Python localmente, deployá el worker en un servidor que corra 24/7.
@@ -149,24 +176,43 @@ git push -u origin main
    Ubicación: Supabase Dashboard → Settings → API → service_role
 
 3. **Deploy automático:**
-   - Railway detecta `Procfile` y `railway.json`
-   - Build: instala deps + Playwright
-   - Start: ejecuta `python main.py`
+   - Railway detecta `Dockerfile` y `railway.json`
+   - Build: instala deps + Playwright + Chromium
+   - Start: ejecuta `python start_workers.py` (lanza 2 workers en paralelo)
+     - **Domain Hunter Worker**: Busca dominios en Google 24/7
+     - **LeadSniper Worker**: Procesa leads y envía emails
 
-### Paso 3: Verificar
+### Paso 3: Verificar en Logs de Railway
 
-1. En Botslode, agregar dominios
-2. Ver logs de Railway procesando
-3. Logs aparecen en tiempo real en Botslode
+Deberías ver algo como:
+
+```
+🤖 HUNTERBOT - WORKER MANAGER
+======================================================================
+🚀 Iniciando DOMAIN-HUNTER...
+🚀 Iniciando LEADSNIPER...
+✅ Ambos workers iniciados correctamente
+
+[DOMAIN-HUNTER] 👥 1 usuario(s) con bot activo
+[DOMAIN-HUNTER] 🎯 Usuario: xxx... | Nicho: inmobiliarias
+[DOMAIN-HUNTER] 🔍 Buscando: "inmobiliarias en Rosario Argentina"
+[DOMAIN-HUNTER] 💾 5 dominios guardados en Supabase
+
+[LEADSNIPER] 🔍 Procesando 5 dominios pendientes
+[LEADSNIPER] ✉️ Email encontrado: info@ejemplo.com
+[LEADSNIPER] 📧 Email enviado exitosamente
+```
 
 ### ✅ Resultado
 
 Los usuarios de Botslode:
 - ✅ Solo usan la app (no instalan nada)
-- ✅ Agregan dominios y todo funciona automáticamente
-- ✅ Ven logs en tiempo real sin configurar nada
+- ✅ **Prenden el bot** desde Botslode
+- ✅ El Domain Hunter busca dominios automáticamente en Google
+- ✅ El LeadSniper procesa los dominios y envía emails
+- ✅ Ven logs en tiempo real de ambos workers
 
-El worker procesa la cola de todos los usuarios 24/7 en segundo plano.
+**Ambos workers** procesan la cola de todos los usuarios 24/7 en segundo plano.
 
 ### 💰 Costos
 

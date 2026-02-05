@@ -42,5 +42,5 @@ RUN playwright install chromium
 # Copiar el resto del código
 COPY . .
 
-# Comando para ejecutar el worker
-CMD ["python", "main.py"]
+# Comando para ejecutar ambos workers en paralelo
+CMD ["python", "start_workers.py"]
