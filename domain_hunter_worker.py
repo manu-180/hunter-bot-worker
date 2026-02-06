@@ -303,6 +303,19 @@ class DomainHunterWorker:
             return
         
         log.info("✅ SerpAPI configurada")
+        
+        # 🔖 FINGERPRINT DE VERSION - para confirmar qué código corre Railway
+        utc_now = datetime.utcnow()
+        utc_hour = utc_now.hour
+        argentina_hour = (utc_hour - 3) % 24
+        argentina_min = utc_now.minute
+        log.info(f"🔖 VERSION: horario_guard_v2 | DOBLE VERIFICACION DE HORARIO ACTIVA")
+        log.info(f"🕐 HORA ACTUAL: Argentina={argentina_hour:02d}:{argentina_min:02d} | UTC={utc_hour:02d}:{argentina_min:02d}")
+        log.info(f"🕐 HORARIO LABORAL: {BUSINESS_HOURS_START}:00 - {BUSINESS_HOURS_END}:00 (hora Argentina)")
+        log.info(f"🛡️ GUARDIA DOBLE: check en _main_loop() + check en _search_domains_for_user()")
+        _currently_business = is_business_hours()
+        log.info(f"📊 ESTADO ACTUAL: {'DENTRO de horario laboral - buscando dominios' if _currently_business else 'FUERA de horario - SerpAPI PAUSADO, 0 creditos se gastaran'}")
+        
         log.info(f"⏱️  Check de usuarios cada {CHECK_USERS_INTERVAL}s")
         log.info(f"⏱️  Delay entre búsquedas: {MIN_DELAY_BETWEEN_SEARCHES}-{MAX_DELAY_BETWEEN_SEARCHES}s")
         log.info(f"📦 Batch size: {DOMAIN_BATCH_SIZE} dominios\n")
@@ -434,6 +447,16 @@ class DomainHunterWorker:
         log.info(f"🔍 Query SerpAPI: \"{query}\"")
         
         try:
+            # 🛡️ GUARDIA FINAL: verificar horario JUSTO antes de gastar crédito
+            if not is_business_hours():
+                utc_now = datetime.utcnow()
+                argentina_hour = (utc_now.hour - 3) % 24
+                log.warning(
+                    f"🛡️ GUARDIA FINAL: Bloqueando llamada a SerpAPI fuera de horario "
+                    f"(hora Argentina: {argentina_hour:02d}:00). No se gastará crédito."
+                )
+                return []
+            
             # Configurar búsqueda con SerpAPI
             params = {
                 "q": query,
@@ -444,6 +467,15 @@ class DomainHunterWorker:
                 "start": start_result,
                 "api_key": self.serpapi_key
             }
+            
+            # 💰 Log de auditoría: registrar hora exacta de cada búsqueda SerpAPI
+            utc_now = datetime.utcnow()
+            argentina_hour = (utc_now.hour - 3) % 24
+            argentina_min = utc_now.minute
+            log.info(
+                f"💰 SERPAPI CALL: hora Argentina {argentina_hour:02d}:{argentina_min:02d} | "
+                f"UTC {utc_now.hour:02d}:{argentina_min:02d} | Query: \"{query}\""
+            )
             
             # Ejecutar búsqueda
             search = await asyncio.to_thread(GoogleSearch(params).get_dict)
