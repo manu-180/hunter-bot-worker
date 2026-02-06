@@ -89,8 +89,8 @@ El worker correrá indefinidamente, procesando:
 | `SUPABASE_URL` | Sí | URL de tu proyecto Supabase |
 | `SUPABASE_KEY` | Sí | API key de Supabase |
 | `RESEND_API_KEY` | Sí | API key de Resend |
-| `FROM_EMAIL` | Sí | Email remitente (dominio verificado) |
-| `FROM_NAME` | No | Nombre del remitente |
+| `FROM_EMAIL` | Sí | Email remitente (ej: `manuel@botlode.com`, dominio verificado en Resend) |
+| `FROM_NAME` | No | Nombre del remitente (ej: `Manuel de Botlode`) |
 | `CALENDAR_LINK` | No | Link para agendar demos |
 
 ## Agregar Dominios para Scraping

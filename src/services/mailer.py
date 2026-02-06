@@ -51,8 +51,8 @@ class MailerService:
         
         resend.api_key = api_key
         
-        self.from_email = os.getenv("FROM_EMAIL", "leads@example.com")
-        self.from_name = os.getenv("FROM_NAME", "LeadSniper")
+        self.from_email = os.getenv("FROM_EMAIL", "manuel@botlode.com")
+        self.from_name = os.getenv("FROM_NAME", "Manuel de Botlode")
         self.min_delay = min_delay
         self.max_delay = max_delay
         
