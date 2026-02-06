@@ -41,6 +41,13 @@ MAX_DELAY_BETWEEN_SEARCHES = 10  # Reducido de 90s a 10s
 # Cada cuánto checar por usuarios con bot enabled (en segundos)
 CHECK_USERS_INTERVAL = 60  # 1 minuto
 
+# =============================================================================
+# HORARIO INTELIGENTE - Pausar búsquedas de noche para no gastar SerpAPI
+# =============================================================================
+BUSINESS_HOURS_START = 8   # 8 AM (hora Argentina)
+BUSINESS_HOURS_END = 19    # 7 PM (hora Argentina)
+PAUSE_CHECK_INTERVAL = 300  # Revisar cada 5 minutos cuando está pausado
+
 # Batch size: cuántos dominios intentar agregar por búsqueda (solo los nuevos se insertan)
 DOMAIN_BATCH_SIZE = 20  # Más candidatos por ronda para que la cola PEND pueda crecer
 
@@ -236,6 +243,30 @@ except ImportError:
     TOTAL_PAISES = len(PAISES)
 
 # =============================================================================
+# FUNCIONES AUXILIARES - HORARIO INTELIGENTE
+# =============================================================================
+
+def is_business_hours() -> bool:
+    """
+    Verifica si estamos en horario laboral (8 AM - 7 PM, hora Argentina).
+    
+    Railway corre en UTC, convertimos a Argentina (UTC-3).
+    
+    Returns:
+        True si estamos en horario laboral, False si no
+    """
+    utc_now = datetime.utcnow()
+    utc_hour = utc_now.hour
+    
+    # Convertir UTC a hora de Argentina (UTC-3)
+    argentina_hour = (utc_hour - 3) % 24
+    
+    # Verificar si estamos entre 8 AM y 7 PM (hora Argentina)
+    in_business_hours = BUSINESS_HOURS_START <= argentina_hour < BUSINESS_HOURS_END
+    
+    return in_business_hours
+
+# =============================================================================
 # LOGGER
 # =============================================================================
 
@@ -293,6 +324,18 @@ class DomainHunterWorker:
                 if not self.active_users:
                     log.info("😴 No hay usuarios con bot habilitado. Esperando...")
                     await asyncio.sleep(CHECK_USERS_INTERVAL)
+                    continue
+                
+                # 🕐 VERIFICAR HORARIO LABORAL (8 AM - 7 PM, hora Argentina)
+                if not is_business_hours():
+                    utc_now = datetime.utcnow()
+                    argentina_hour = (utc_now.hour - 3) % 24
+                    log.warning(
+                        f"⏸️  FUERA DE HORARIO LABORAL (hora Argentina: {argentina_hour:02d}:00). "
+                        f"Pausando búsquedas de dominios hasta las {BUSINESS_HOURS_START}:00 AM..."
+                    )
+                    log.info(f"💰 Ahorrando créditos de SerpAPI. Revisando en {PAUSE_CHECK_INTERVAL}s...")
+                    await asyncio.sleep(PAUSE_CHECK_INTERVAL)
                     continue
                 
                 # 2. Procesar cada usuario activo
