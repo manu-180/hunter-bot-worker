@@ -15,6 +15,7 @@ import asyncio
 import os
 import signal
 import sys
+from datetime import datetime
 from typing import Optional
 
 from dotenv import load_dotenv
@@ -27,6 +28,13 @@ from src.services.scraper import ScraperService
 from src.services.mailer import MailerService
 from src.services.hunter_logger import HunterLoggerService
 from src.utils.logger import log
+
+# =============================================================================
+# CONFIGURACIÓN DE HORARIO DE ENVÍO
+# =============================================================================
+BUSINESS_HOURS_START = 8   # 8 AM
+BUSINESS_HOURS_END = 19    # 7 PM (19:00)
+PAUSE_CHECK_INTERVAL = 300  # Revisar cada 5 minutos cuando está pausado
 
 
 class LeadSniperWorker:
@@ -214,9 +222,23 @@ class LeadSniperWorker:
         
         Each user's emails are sent with their own Resend API key.
         
+        HORARIO INTELIGENTE: Solo envía emails entre 8 AM - 7 PM (hora Argentina)
+        para maximizar tasa de apertura y mantener profesionalismo.
+        
         Returns:
             Number of emails processed
         """
+        # 🕐 VERIFICAR HORARIO LABORAL (8 AM - 7 PM)
+        if not is_business_hours():
+            # Calcular hora actual en Argentina para mostrar en log
+            utc_now = datetime.utcnow()
+            argentina_hour = (utc_now.hour - 3) % 24
+            log.warning(
+                f"⏸️  FUERA DE HORARIO LABORAL (hora Argentina: {argentina_hour:02d}:00). "
+                f"Pausando envío de emails hasta las {BUSINESS_HOURS_START}:00 AM..."
+            )
+            return 0  # No procesar emails, pero continuar el loop
+        
         # Fetch queued emails from all users
         queued_leads = self.repo.fetch_queued_emails_all_users(limit=self.email_batch_size)
         
@@ -344,9 +366,16 @@ class LeadSniperWorker:
                 # Sleep if no work was done
                 if work_done == 0:
                     cycles_without_work += 1
-                    if cycles_without_work == 1:
-                        log.info(f"Sin trabajo pendiente, esperando {self.idle_sleep_seconds}s...")
-                    await asyncio.sleep(self.idle_sleep_seconds)
+                    
+                    # Si estamos fuera de horario laboral, dormir más tiempo
+                    if not is_business_hours():
+                        if cycles_without_work == 1:
+                            log.info(f"⏸️  Fuera de horario laboral. Revisando cada {PAUSE_CHECK_INTERVAL}s...")
+                        await asyncio.sleep(PAUSE_CHECK_INTERVAL)
+                    else:
+                        if cycles_without_work == 1:
+                            log.info(f"Sin trabajo pendiente, esperando {self.idle_sleep_seconds}s...")
+                        await asyncio.sleep(self.idle_sleep_seconds)
                 else:
                     cycles_without_work = 0
                     
@@ -359,6 +388,30 @@ class LeadSniperWorker:
                 await asyncio.sleep(5)
         
         await self.shutdown()
+
+
+def is_business_hours() -> bool:
+    """
+    Verifica si estamos en horario laboral (8 AM - 7 PM).
+    
+    IMPORTANTE: Railway corre en UTC, pero queremos horario de Argentina (UTC-3).
+    Ajustamos automáticamente para que los emails se envíen en horario local.
+    
+    Returns:
+        True si estamos en horario laboral, False si no
+    """
+    # Railway usa UTC, Argentina es UTC-3
+    # Por ejemplo: 11:00 UTC = 08:00 Argentina
+    utc_now = datetime.utcnow()
+    utc_hour = utc_now.hour
+    
+    # Convertir UTC a hora de Argentina (UTC-3)
+    argentina_hour = (utc_hour - 3) % 24
+    
+    # Verificar si estamos entre 8 AM y 7 PM (hora Argentina)
+    in_business_hours = BUSINESS_HOURS_START <= argentina_hour < BUSINESS_HOURS_END
+    
+    return in_business_hours
 
 
 async def main() -> None:
