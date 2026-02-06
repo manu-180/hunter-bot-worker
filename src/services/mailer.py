@@ -195,6 +195,116 @@ class MailerService:
             font-weight: 700;
             font-size: 14px;
         }
+        .free-trial-section {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            border-radius: 16px;
+            padding: 35px 25px;
+            margin: 30px 0;
+            text-align: center;
+            border: 1px solid rgba(255, 193, 7, 0.2);
+        }
+        .free-trial-badge {
+            display: inline-block;
+            background: linear-gradient(135deg, #FFC107, #FF9800);
+            color: #000;
+            padding: 6px 18px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 800;
+            letter-spacing: 1.5px;
+            text-transform: uppercase;
+            margin-bottom: 15px;
+        }
+        .free-trial-title {
+            color: #ffffff;
+            font-size: 26px;
+            font-weight: 800;
+            margin: 0 0 6px 0;
+            line-height: 1.3;
+        }
+        .free-trial-title span {
+            color: #FFC107;
+        }
+        .free-trial-sub {
+            color: #b0b0b0;
+            font-size: 15px;
+            margin: 0 0 22px 0;
+            line-height: 1.5;
+        }
+        .code-window {
+            background: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 10px;
+            margin: 0 auto 18px auto;
+            max-width: 500px;
+            text-align: left;
+            overflow: hidden;
+        }
+        .code-titlebar {
+            background: #161b22;
+            padding: 10px 14px;
+            border-bottom: 1px solid #30363d;
+        }
+        .code-dot {
+            display: inline-block;
+            width: 11px;
+            height: 11px;
+            border-radius: 50%;
+            margin-right: 6px;
+        }
+        .code-filename {
+            color: #8b949e;
+            font-size: 12px;
+            float: right;
+            margin-top: 2px;
+        }
+        .code-body {
+            padding: 14px 16px;
+            font-family: 'SF Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: 11px;
+            color: #c9d1d9;
+            line-height: 1.7;
+            word-break: break-all;
+            white-space: pre-wrap;
+        }
+        .code-tag {
+            color: #ff7b72;
+        }
+        .code-attr {
+            color: #79c0ff;
+        }
+        .code-val {
+            color: #a5d6ff;
+        }
+        .free-trial-steps {
+            margin: 18px 0 0 0;
+            padding: 0;
+        }
+        .step-item {
+            display: inline-block;
+            color: #e0e0e0;
+            font-size: 13px;
+            margin: 4px 8px;
+        }
+        .step-num {
+            display: inline-block;
+            background: #FFC107;
+            color: #000;
+            width: 22px;
+            height: 22px;
+            border-radius: 50%;
+            font-size: 12px;
+            font-weight: 800;
+            line-height: 22px;
+            text-align: center;
+            margin-right: 5px;
+        }
+        .free-trial-note {
+            color: #6e7681;
+            font-size: 12px;
+            margin: 18px 0 0 0;
+            font-style: italic;
+        }
         .cta-invite {
             background: linear-gradient(135deg, #FFFDE7 0%, #FFF9C4 100%);
             border: 2px solid #FFE082;
@@ -302,13 +412,39 @@ class MailerService:
                 ⏰ TUS COMPETIDORES YA LO ESTÁN USANDO
             </div>
             
+            <!-- SECCION PRUEBA GRATIS - EFECTO WOW -->
+            <div class="free-trial-section">
+                <div class="free-trial-badge">100% GRATIS</div>
+                <div style="font-size: 48px; margin-bottom: 8px;">🎁</div>
+                <h2 class="free-trial-title">Probalo <span>GRATIS</span> en tu web</h2>
+                <p class="free-trial-sub">Copiá este código y pegalo en tu web antes del cierre <code style="background: rgba(255,193,7,0.2); color: #FFC107; padding: 2px 6px; border-radius: 4px; font-size: 13px;">&lt;/body&gt;</code></p>
+                
+                <div class="code-window">
+                    <div class="code-titlebar">
+                        <span class="code-dot" style="background: #ff5f56;"></span>
+                        <span class="code-dot" style="background: #ffbd2e;"></span>
+                        <span class="code-dot" style="background: #27c93f;"></span>
+                        <span class="code-filename">tu-web.html</span>
+                    </div>
+                    <div class="code-body"><span class="code-tag">&lt;iframe</span> <span class="code-attr">src</span>=<span class="code-val">"https://botlode-player.vercel.app?botId=0038971a-da75-4ddc-8663-d52a6b8f2936&amp;v=2.5"</span> <span class="code-attr">style</span>=<span class="code-val">"position:fixed;bottom:16px;right:16px;width:140px;height:140px;border:none;z-index:9999"</span> <span class="code-attr">allow</span>=<span class="code-val">"clipboard-write"</span><span class="code-tag">&gt;&lt;/iframe&gt;</span></div>
+                </div>
+                
+                <div class="free-trial-steps">
+                    <span class="step-item"><span class="step-num">1</span> Copiá el código</span>
+                    <span class="step-item"><span class="step-num">2</span> Pegalo en tu web</span>
+                    <span class="step-item"><span class="step-num">3</span> ¡Listo! Ya tenés tu bot</span>
+                </div>
+                
+                <p class="free-trial-note">Sin registro. Sin tarjeta. Solo 1 línea de código y en 30 segundos está funcionando.</p>
+            </div>
+            
             <div class="cta-invite">
-                <p class="cta-invite-text">¿Tenés dudas?</p>
-                <p class="cta-invite-sub">Probálo en mi página.</p>
+                <p class="cta-invite-text">¿Querés verlo en acción primero?</p>
+                <p class="cta-invite-sub">Mirá cómo funciona en mi página.</p>
             </div>
             
             <center>
-                <a href="{{calendar_link}}" class="cta-button" style="color: #000 !important; text-decoration: none;">BotLode</a>
+                <a href="{{calendar_link}}" class="cta-button" style="color: #000 !important; text-decoration: none;">VER DEMO EN VIVO</a>
             </center>
             
             <div class="signature">
