@@ -1,0 +1,246 @@
+═══════════════════════════════════════════════════════════════════════════════
+🚀 GUÍA DE DEPLOYMENT - ALGORITMO INFINITO
+═══════════════════════════════════════════════════════════════════════════════
+
+PASO A PASO para deployar el nuevo sistema de búsqueda masiva
+
+═══════════════════════════════════════════════════════════════════════════════
+📋 PRE-REQUISITOS
+═══════════════════════════════════════════════════════════════════════════════
+
+✅ Archivos nuevos creados:
+   - cities_data.py (2,100 ciudades)
+   - ALGORITMO_INFINITO_README.txt (documentación)
+   - reset_tracking_fresh_start.sql (script opcional)
+   - DEPLOY_ALGORITMO_INFINITO.txt (esta guía)
+
+✅ Archivos modificados:
+   - domain_hunter_worker.py (120 nichos, algoritmo mejorado)
+
+═══════════════════════════════════════════════════════════════════════════════
+🔧 PASO 1: PREPARAR CAMBIOS
+═══════════════════════════════════════════════════════════════════════════════
+
+# En tu terminal de Windows (PowerShell o CMD):
+
+cd c:\MisProyectos\HunterBot\leadsniper_backend
+
+# Ver cambios pendientes
+git status
+
+# Debería mostrar:
+#   modified: domain_hunter_worker.py
+#   new file: cities_data.py
+#   new file: ALGORITMO_INFINITO_README.txt
+#   new file: reset_tracking_fresh_start.sql
+#   new file: DEPLOY_ALGORITMO_INFINITO.txt
+
+═══════════════════════════════════════════════════════════════════════════════
+🚢 PASO 2: COMMIT Y PUSH A RAILWAY
+═══════════════════════════════════════════════════════════════════════════════
+
+# Agregar todos los archivos
+git add .
+
+# Commit con mensaje descriptivo
+git commit -m "Algoritmo infinito: 120 nichos x 2,100 ciudades = 252K combinaciones"
+
+# Push a main (Railway re-deployará automáticamente)
+git push origin main
+
+═══════════════════════════════════════════════════════════════════════════════
+⏳ PASO 3: ESPERAR DEPLOYMENT EN RAILWAY
+═══════════════════════════════════════════════════════════════════════════════
+
+1. Ir a Railway dashboard
+2. Seleccionar tu proyecto (leadsniper_backend)
+3. Ver el deployment en progreso (debería tomar 1-3 minutos)
+
+Logs que deberías ver:
+  ✅ "Installing dependencies..."
+  ✅ "Starting domain_hunter_worker.py..."
+  ✅ "Base de ciudades cargada: 17 países, 2100 ciudades" ← CLAVE
+
+Si ves este último mensaje → Deployment exitoso! ✅
+
+═══════════════════════════════════════════════════════════════════════════════
+🔄 PASO 4: RESET TRACKING (OPCIONAL)
+═══════════════════════════════════════════════════════════════════════════════
+
+Opción A: EMPEZAR DESDE CERO (recomendado si querés aprovechar TODO el potencial)
+   1. Abrir Supabase SQL Editor
+   2. Copiar el contenido de reset_tracking_fresh_start.sql
+   3. Descomentar la línea DELETE (quitar /* */)
+   4. Ejecutar
+   5. El bot creará automáticamente las nuevas combinaciones
+
+Opción B: CONTINUAR CON LO QUE HAY (si el bot ya está funcionando bien)
+   - No hacer nada
+   - El bot seguirá con las combinaciones existentes
+   - Cuando las agote, creará automáticamente las nuevas
+
+═══════════════════════════════════════════════════════════════════════════════
+✅ PASO 5: VERIFICAR QUE FUNCIONA
+═══════════════════════════════════════════════════════════════════════════════
+
+1. LOGS DE RAILWAY:
+   Buscar en tiempo real:
+   
+   ✅ "Base de ciudades cargada: 17 países, 2100 ciudades"
+   ✅ "Progresión: Siguiente ciudad en Argentina"
+   ✅ "Nueva: inmobiliarias | Buenos Aires, Argentina"
+   ✅ "✅ dominiosdeltriunfo.com"
+   ✅ "dominios nuevos agregados a la cola"
+
+2. SUPABASE - domain_search_tracking:
+
+   -- Ver últimas combinaciones creadas
+   SELECT
+       nicho,
+       ciudad,
+       pais,
+       current_page,
+       total_domains_found,
+       last_searched_at
+   FROM domain_search_tracking
+   WHERE user_id = '38152119-7da4-442e-9826-20901c65f42e'
+   ORDER BY created_at DESC
+   LIMIT 10;
+
+   Deberías ver combinaciones con las NUEVAS ciudades (ej: "La Plata", "Quilmes", etc)
+
+3. SUPABASE - leads:
+
+   -- Ver dominios más recientes
+   SELECT
+       domain,
+       status,
+       created_at
+   FROM leads
+   WHERE user_id = '38152119-7da4-442e-9826-20901c65f42e'
+   ORDER BY created_at DESC
+   LIMIT 20;
+
+   Deberías ver nuevos dominios agregados con timestamps recientes
+
+═══════════════════════════════════════════════════════════════════════════════
+📊 PASO 6: MONITOREO CONTINUO
+═══════════════════════════════════════════════════════════════════════════════
+
+Ejecutar cada hora para ver progreso:
+
+-- Estadísticas globales
+SELECT
+    COUNT(*) as total_combinaciones,
+    COUNT(DISTINCT nicho) as nichos_diferentes,
+    COUNT(DISTINCT pais) as paises_diferentes,
+    COUNT(DISTINCT ciudad) as ciudades_diferentes,
+    SUM(total_domains_found) as dominios_totales,
+    MAX(last_searched_at) as ultima_actividad
+FROM domain_search_tracking
+WHERE user_id = '38152119-7da4-442e-9826-20901c65f42e';
+
+-- Ver nicho/país actual
+SELECT
+    nicho,
+    pais,
+    ciudad,
+    current_page,
+    total_domains_found,
+    last_searched_at
+FROM domain_search_tracking
+WHERE user_id = '38152119-7da4-442e-9826-20901c65f42e'
+  AND last_searched_at IS NOT NULL
+ORDER BY last_searched_at DESC
+LIMIT 1;
+
+-- Progreso por país (cuántas ciudades procesadas)
+SELECT
+    pais,
+    COUNT(*) as ciudades_procesadas,
+    SUM(total_domains_found) as dominios_encontrados
+FROM domain_search_tracking
+WHERE user_id = '38152119-7da4-442e-9826-20901c65f42e'
+GROUP BY pais
+ORDER BY MAX(last_searched_at) DESC NULLS LAST;
+
+═══════════════════════════════════════════════════════════════════════════════
+🐛 TROUBLESHOOTING
+═══════════════════════════════════════════════════════════════════════════════
+
+Problema: No veo "Base de ciudades cargada" en logs
+Solución: 
+  - Verificar que cities_data.py se subió correctamente a Git
+  - Re-deployar manualmente en Railway
+
+Problema: El bot sigue usando las ciudades viejas
+Solución:
+  - Ejecutar reset_tracking_fresh_start.sql
+  - Reiniciar el worker en Railway
+
+Problema: Error "ModuleNotFoundError: No module named 'cities_data'"
+Solución:
+  - Verificar que cities_data.py está en el mismo directorio que domain_hunter_worker.py
+  - Verificar que se hizo git push correctamente
+
+Problema: El bot está muy lento
+Solución:
+  - Es normal, el delay es de 4-8 segundos entre búsquedas (para no saturar SerpAPI)
+  - Ver MIN_DELAY_BETWEEN_SEARCHES y MAX_DELAY_BETWEEN_SEARCHES en domain_hunter_worker.py
+
+Problema: SerpAPI retorna "insufficient credits"
+Solución:
+  - Recargar créditos en SerpAPI
+  - El bot se pausará automáticamente hasta que haya créditos
+
+═══════════════════════════════════════════════════════════════════════════════
+🎯 EXPECTATIVAS REALISTAS
+═══════════════════════════════════════════════════════════════════════════════
+
+Con el nuevo sistema:
+
+✅ Dominio/hora: ~100 dominios/hora (con delay promedio de 6s)
+✅ Dominios/día: ~2,400 dominios/día (24/7)
+✅ Tiempo para 100K dominios: ~41 días
+✅ Tiempo para ciclo completo (250K combinaciones): ~3-4 meses 24/7
+
+Esto es MUCHÍSIMO más que el sistema anterior que se quedaba sin combinaciones
+rápidamente.
+
+═══════════════════════════════════════════════════════════════════════════════
+🎉 CHECKLIST FINAL
+═══════════════════════════════════════════════════════════════════════════════
+
+□ Git commit y push ejecutado
+□ Railway deployment completado
+□ Logs muestran "Base de ciudades cargada: 17 países, 2100 ciudades"
+□ (Opcional) Tracking reseteado con reset_tracking_fresh_start.sql
+□ domain_search_tracking muestra nuevas combinaciones
+□ leads muestra nuevos dominios con timestamps recientes
+□ Bot activo 24/7 en Railway
+
+Si todos los checks están OK → ¡Sistema funcionando! 🚀
+
+═══════════════════════════════════════════════════════════════════════════════
+📞 PRÓXIMOS PASOS
+═══════════════════════════════════════════════════════════════════════════════
+
+1. Dejar el bot corriendo 24/7 (Railway se encarga)
+2. Monitorear 1 vez al día con los SQLs de arriba
+3. Ver crecer tu base de datos de leads
+4. El bot automáticamente:
+   - Crea nuevas combinaciones cuando agota las actuales
+   - Progresa secuencialmente (ciudad → país → nicho)
+   - Filtra dominios basura
+   - Envía emails a los dominios con email válido
+
+No requiere intervención manual! Solo verificar que:
+- bot_enabled = true en hunter_configs
+- SerpAPI tiene créditos
+- Railway está activo
+
+═══════════════════════════════════════════════════════════════════════════════
+Creado: 2026-02-06
+Autor: Claude Sonnet 4.5
+Versión: 1.0
+═══════════════════════════════════════════════════════════════════════════════

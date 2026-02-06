@@ -1,0 +1,283 @@
+================================================================================
+✅ MEJORAS EN EL FILTRADO DEL BOT - RESUMEN COMPLETO
+================================================================================
+Fecha: 2026-02-06
+Objetivo: Mejorar la calidad de los dominios recopilados y filtrar basura
+
+================================================================================
+🎯 CAMBIOS REALIZADOS
+================================================================================
+
+1. BLACKLIST AMPLIADA (domain_hunter_worker.py)
+   ------------------------------------------------
+   
+   ANTES (11 items):
+   - google, facebook, instagram, twitter, linkedin, youtube
+   - mercadolibre, olx, zonaprop, argenprop, properati
+   
+   AHORA (50+ items organizados en categorías):
+   
+   ✅ Redes sociales (11)
+      google, facebook, instagram, twitter, linkedin, youtube, tiktok,
+      pinterest, whatsapp, telegram, snapchat
+   
+   ✅ Portales inmobiliarios (10)
+      mercadolibre, olx, zonaprop, argenprop, properati, trovit,
+      lamudi, inmuebles24, metrocuadrado, fincaraiz
+   
+   ✅ Gobierno y entidades públicas (8)
+      gob.ar, gov.ar, gobierno, .mil., afip, anses, arba,
+      provincia., municipalidad, intendencia
+   
+   ✅ Portales de noticias (10)
+      clarin, lanacion, infobae, pagina12, lavoz, losandes,
+      telam, perfil, ambito, cronista
+   
+   ✅ Portales educativos (5)
+      edu.ar, educacion, universidad, .edu, campus
+   
+   ✅ Bancos y servicios financieros (10)
+      banco, santander, galicia, nacion, provincia.com,
+      hsbc, bbva, icbc, frances, supervielle
+   
+   ✅ Organizaciones y ONGs (4)
+      wikipedia, wikidata, ong, fundacion
+   
+   ✅ Portales de empleo (5)
+      zonajobs, computrabajo, bumeran, indeed, linkedin
+   
+   ✅ Portales genéricos y marketplaces (8)
+      booking.com, airbnb, tripadvisor, yelp, foursquare,
+      despegar, almundo, decolar, expedia
+   
+   ✅ Otros sitios a evitar (13)
+      maps.google, /maps/, youtube, blogspot, wordpress.com,
+      wix.com, weebly, tumblr, .gov, gmail, outlook,
+      hotmail, yahoo, ejemplo, example, test, demo
+
+2. VALIDACIONES MEJORADAS (_is_valid_domain)
+   -------------------------------------------
+   
+   ANTES (4 validaciones):
+   - Longitud mínima
+   - Blacklist básica
+   - Verificar punto
+   - No contener "google"
+   
+   AHORA (9 validaciones):
+   
+   ✅ Filtrar links de Google Maps (/maps/)
+   ✅ Filtrar caracteres raros (%, [, ], {, }, |, \)
+   ✅ Verificar TLD (punto obligatorio)
+   ✅ Filtrar dominios de ejemplo/prueba
+   ✅ Blacklist ampliada (50+ términos)
+   ✅ Extensiones gubernamentales (.gob., .gov., .mil., .edu.ar)
+   ✅ Nombre mínimo 3 caracteres
+   ✅ Filtrar blogs gratuitos (blogspot, wordpress, wix, weebly)
+   ✅ No permitir emails como dominios
+
+3. QUERIES DE BÚSQUEDA MEJORADAS
+   -------------------------------
+   
+   ANTES:
+   "{nicho} en {ciudad} {pais}"
+   
+   AHORA (rotación inteligente de 4 tipos):
+   - "{nicho} en {ciudad}"
+   - "{nicho} {ciudad} contacto"
+   - "{nicho} profesionales {ciudad}"
+   - "empresas de {nicho} {ciudad}"
+   
+   Esto mejora la variedad de resultados y enfoca en negocios reales.
+
+================================================================================
+🚀 CÓMO APLICAR LOS CAMBIOS
+================================================================================
+
+OPCIÓN A - Commit y Push (Recomendado si usas Git)
+---------------------------------------------------
+
+1. Hacer commit de los cambios:
+   
+   git add domain_hunter_worker.py
+   git commit -m "Mejorar filtrado: blacklist ampliada, validaciones mejoradas, queries optimizadas"
+   git push origin main
+
+2. Railway detectará el push y hará redeploy automático (2-3 minutos)
+
+3. Verificar logs en Railway para confirmar que funcionó
+
+
+OPCIÓN B - Redeploy manual en Railway
+--------------------------------------
+
+1. Ir a Railway Dashboard
+2. Seleccionar servicio "worker" o "domain_hunter_worker"
+3. Click en "Deployments"
+4. Click en "Redeploy" en el último deployment
+5. Esperar 2-3 minutos
+
+================================================================================
+🧹 LIMPIAR DOMINIOS BASURA EXISTENTES
+================================================================================
+
+Archivo creado: limpiar_dominios_basura.sql
+
+PASO 1 - Ver cuánta basura tienes:
+   
+   Ejecutar PASO 1 del SQL (solo muestra, no elimina)
+   
+   Verás categorías como:
+   - DOMINIOS DE GOBIERNO: 5
+   - PORTALES GENERICOS: 3
+   - LINKS DE GOOGLE MAPS: 2
+   - BANCOS Y SERVICIOS: 1
+   - PORTALES INMOBILIARIOS: 0
+   - TOTAL DE BASURA: 11
+
+PASO 2 - Ver los dominios específicos:
+   
+   Ejecutar PASO 2 del SQL
+   
+   Te mostrará los dominios exactos que se van a eliminar
+
+PASO 3 - Eliminar (con cuidado):
+   
+   Si estás conforme con lo que viste en PASO 1 y 2:
+   1. Descomentar el DELETE del PASO 3
+   2. Ejecutar
+   3. Los dominios basura se eliminan permanentemente
+
+PASO 4 - Verificar:
+   
+   Ejecutar PASO 4 y 5 para ver estadísticas después de la limpieza
+
+================================================================================
+📊 RESULTADOS ESPERADOS
+================================================================================
+
+ANTES de las mejoras:
+  - Dominios totales: 281
+  - Dominios basura: ~15-20 (5-7%)
+  - Dominios de gobierno: 5
+  - Portales genéricos: 3
+  - Links de Google Maps: 2
+
+DESPUÉS de las mejoras:
+  - El bot NO agregará más dominios basura
+  - Solo dominios de negocios reales
+  - Mejor tasa de emails encontrados
+  - Mejor tasa de conversión
+
+TIPOS DE DOMINIOS QUE SÍ SE ACEPTARÁN:
+  ✅ Inmobiliarias locales (ejemplo: goldsteinpropiedades.com)
+  ✅ Gimnasios independientes (ejemplo: playagrandesport.com.ar)
+  ✅ Restaurantes propios (ejemplo: donmario.com.ar)
+  ✅ Talleres mecánicos (ejemplo: tallerbertani.com.ar)
+  ✅ Consultoras (ejemplo: delucaconsultora.com)
+  ✅ Cualquier negocio con dominio propio
+
+TIPOS DE DOMINIOS QUE NO SE ACEPTARÁN:
+  ❌ Gobierno (arba.gov.ar, dprneuquen.gob.ar)
+  ❌ Portales (booking.com, zonaprop.com, clarin.com)
+  ❌ Links de Maps (/maps/dir//...)
+  ❌ Bancos (bancoprovincia.com.ar)
+  ❌ Redes sociales (facebook, instagram)
+  ❌ Blogs gratuitos (algo.blogspot.com)
+
+================================================================================
+🔍 MONITOREO POST-CAMBIOS
+================================================================================
+
+Después de aplicar los cambios, monitorear con estas queries:
+
+1. Ver últimos dominios agregados:
+
+   SELECT domain, created_at
+   FROM leads
+   WHERE user_id = '38152119-7da4-442e-9826-20901c65f42e'
+     AND created_at > NOW() - INTERVAL '1 hour'
+   ORDER BY created_at DESC;
+
+2. Verificar calidad (no debería haber basura):
+
+   SELECT domain, status
+   FROM leads
+   WHERE user_id = '38152119-7da4-442e-9826-20901c65f42e'
+     AND created_at > NOW() - INTERVAL '1 hour'
+     AND (
+       domain LIKE '%.gob.%' OR 
+       domain LIKE '/maps/%' OR
+       domain LIKE '%booking%'
+     );
+   
+   Resultado esperado: 0 filas (sin basura)
+
+3. Ver estadísticas de calidad:
+
+   SELECT 
+     COUNT(*) as total,
+     COUNT(*) FILTER (WHERE email IS NOT NULL) as con_email,
+     ROUND(100.0 * COUNT(*) FILTER (WHERE email IS NOT NULL) / COUNT(*), 2) as porcentaje
+   FROM leads
+   WHERE user_id = '38152119-7da4-442e-9826-20901c65f42e'
+     AND created_at > NOW() - INTERVAL '24 hours';
+
+================================================================================
+⚠️  IMPORTANTE
+================================================================================
+
+1. Los cambios NO afectan a dominios ya existentes
+   - Solo afectan dominios NUEVOS que el bot encuentre
+   - Para limpiar existentes, usar limpiar_dominios_basura.sql
+
+2. El bot seguirá funcionando igual
+   - Misma velocidad de búsqueda
+   - Mismo consumo de créditos SerpAPI
+   - Pero mejores resultados
+
+3. Backup recomendado
+   - Antes de ejecutar DELETE en limpiar_dominios_basura.sql
+   - Hacer un export de la tabla leads (por si acaso)
+
+================================================================================
+📝 ARCHIVOS MODIFICADOS
+================================================================================
+
+1. domain_hunter_worker.py
+   - BLACKLIST_DOMAINS ampliada (líneas 57-92)
+   - GOVERNMENT_TLD agregado (líneas 94-97)
+   - _is_valid_domain() mejorada (líneas 442-487)
+   - Queries de búsqueda mejoradas (líneas 341-355)
+
+2. limpiar_dominios_basura.sql (NUEVO)
+   - Script completo para limpiar dominios existentes
+
+3. MEJORAS_FILTRADO.txt (este archivo)
+   - Documentación completa de los cambios
+
+================================================================================
+✅ PRÓXIMOS PASOS
+================================================================================
+
+1. [ ] Hacer commit y push (o redeploy manual en Railway)
+2. [ ] Esperar 2-3 minutos a que Railway redeploy
+3. [ ] Verificar logs en Railway que no hay errores
+4. [ ] Esperar 5-10 minutos y verificar nuevos dominios (query de monitoreo)
+5. [ ] Ejecutar limpiar_dominios_basura.sql (PASO 1 y 2 primero)
+6. [ ] Si todo OK, ejecutar PASO 3 para eliminar basura
+7. [ ] Monitorear durante 1-2 horas que solo entren dominios buenos
+
+================================================================================
+🆘 SOPORTE
+================================================================================
+
+Si algo no funciona:
+1. Verificar logs de Railway
+2. Verificar que el archivo se guardó correctamente
+3. Verificar que el redeploy se completó sin errores
+4. Ejecutar queries de diagnóstico de debug_tracking.sql
+
+================================================================================
+FIN
+================================================================================

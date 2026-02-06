@@ -53,113 +53,187 @@ USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15",
 ]
 
-# Blacklist de dominios a ignorar
+# Blacklist de dominios a ignorar (ampliada y mejorada)
 BLACKLIST_DOMAINS = {
+    # Redes sociales
     'google', 'facebook', 'instagram', 'twitter', 'linkedin', 'youtube',
+    'tiktok', 'pinterest', 'whatsapp', 'telegram', 'snapchat',
+    
+    # Portales inmobiliarios (queremos inmobiliarias reales, no portales)
     'mercadolibre', 'olx', 'zonaprop', 'argenprop', 'properati',
-    'wikipedia', 'wikidata', 'pinterest', 'tiktok',
+    'trovit', 'lamudi', 'inmuebles24', 'metrocuadrado', 'fincaraiz',
+    
+    # Gobierno y entidades públicas
+    'gob.ar', 'gov.ar', 'gobierno', '.mil.', 'afip', 'anses', 'arba',
+    'provincia.', 'municipalidad', 'intendencia',
+    
+    # Portales de noticias y medios
+    'clarin', 'lanacion', 'infobae', 'pagina12', 'lavoz', 'losandes',
+    'telam', 'perfil', 'ambito', 'cronista',
+    
+    # Portales educativos
+    'edu.ar', 'educacion', 'universidad', '.edu', 'campus',
+    
+    # Bancos y servicios financieros
+    'banco', 'santander', 'galicia', 'nacion', 'provincia.com',
+    'hsbc', 'bbva', 'icbc', 'frances', 'supervielle',
+    
+    # Organizaciones y ONGs
+    'wikipedia', 'wikidata', 'ong', 'fundacion',
+    
+    # Portales de empleo
+    'zonajobs', 'computrabajo', 'bumeran', 'indeed', 'linkedin',
+    
+    # Portales genéricos y marketplaces
+    'booking.com', 'airbnb', 'tripadvisor', 'yelp', 'foursquare',
+    'despegar', 'almundo', 'decolar', 'expedia',
+    
+    # Otros sitios a evitar
+    'maps.google', '/maps/', 'youtube', 'blogspot', 'wordpress.com',
+    'wix.com', 'weebly', 'tumblr', '.gov', 'gmail', 'outlook',
+    'hotmail', 'yahoo', 'ejemplo', 'example', 'test', 'demo',
+}
+
+# Extensiones de dominio gubernamentales a filtrar
+GOVERNMENT_TLD = {
+    '.gob.', '.gov.', '.mil.', '.edu.ar'
 }
 
 # =============================================================================
 # LISTAS DE ROTACIÓN AUTOMÁTICA
 # =============================================================================
 
-# 50+ nichos con potencial de email y ventas
+# 120+ nichos con potencial de email y ventas (EXPANDIDO)
 NICHOS = [
-    # Servicios profesionales
-    "inmobiliarias", "estudios contables", "estudios juridicos", "agencias de marketing",
-    "consultoras", "agencias de diseño", "estudios de arquitectura", "desarrolladores web",
-    "consultoras IT", "agencias SEO", "agencias de publicidad",
+    # ========== SERVICIOS PROFESIONALES (20) ==========
+    "inmobiliarias", "estudios contables", "estudios juridicos", "escribanias",
+    "agencias de marketing", "agencias de marketing digital", "consultoras",
+    "agencias de diseño", "agencias de diseño grafico", "estudios de arquitectura",
+    "desarrolladores web", "consultoras IT", "agencias SEO", "agencias de publicidad",
+    "agencias de social media", "productoras audiovisuales", "estudios de ingenieria",
+    "topografos", "agrimensores", "peritos",
     
-    # Servicios locales
-    "gimnasios", "centros de estetica", "peluquerias", "spa", "clinicas dentales",
-    "clinicas veterinarias", "talleres mecanicos", "lavaderos de autos", "cerrajerias",
+    # ========== SERVICIOS LOCALES (25) ==========
+    "gimnasios", "centros de estetica", "peluquerias", "barbereias",
+    "spa", "centros de masajes", "salones de belleza", "manicura y pedicura",
+    "clinicas dentales", "clinicas veterinarias", "pet shops", "veterinarias",
+    "talleres mecanicos", "talleres de chapa y pintura", "gomenerias",
+    "lavaderos de autos", "lubricentros", "cerrajerias", "herrerias",
     "empresas de limpieza", "empresas de mudanzas", "empresas de seguridad",
+    "empresas de vigilancia", "guardias de seguridad", "servicios de seguridad",
     
-    # Retail y comercio
-    "tiendas de ropa", "joyerias", "opticas", "librerias", "jugueterias",
-    "ferreterias", "viveros", "pet shops", "tiendas de deportes",
+    # ========== CONSTRUCCIÓN Y MANTENIMIENTO (15) ==========
+    "empresas de construccion", "constructoras", "arquitectura y construccion",
+    "electricistas", "plomeros", "gasfiteros", "pintores", "yeseros",
+    "albaniles", "carpinteros", "herreros", "vidrieros",
+    "instaladores de aire acondicionado", "reparacion de electrodomesticos",
+    "techistas",
     
-    # Gastronomía
-    "restaurantes", "cafeterias", "panaderias", "pizzerias", "hamburgueserias",
-    "heladerias", "bares", "catering",
+    # ========== RETAIL Y COMERCIO (20) ==========
+    "tiendas de ropa", "boutiques", "tiendas de ropa infantil",
+    "joyerias", "relojerias", "opticas", "librerias", "papelerias",
+    "jugueterias", "ferreterias", "viveros", "tiendas de jardineria",
+    "tiendas de deportes", "casas de deportes", "bicicleterias",
+    "tiendas de repuestos", "casas de musica", "instrumentos musicales",
+    "tiendas de electronica", "casas de electrodomesticos",
     
-    # Salud y bienestar
-    "centros medicos", "laboratorios", "kinesiologos", "nutricionistas",
-    "psicologos", "centros de yoga", "centros de pilates",
+    # ========== GASTRONOMÍA (20) ==========
+    "restaurantes", "cafeterias", "cafes", "panaderias", "pastelerias",
+    "pizzerias", "hamburgueserias", "parrillas", "asaderos",
+    "heladerias", "bares", "pubs", "cervecerías artesanales",
+    "catering", "servicios de catering", "rotiserias", "comidas rapidas",
+    "delivery de comida", "cocinas industriales", "confiterias",
     
-    # Educación
-    "institutos de idiomas", "academias de arte", "escuelas de musica",
-    "centros de capacitacion", "guarderias",
+    # ========== SALUD Y BIENESTAR (20) ==========
+    "centros medicos", "clinicas", "consultorios medicos", "policlinicas",
+    "laboratorios", "laboratorios de analisis clinicos", "farmacias",
+    "kinesiologos", "centros de kinesiologia", "fisioterapeutas",
+    "nutricionistas", "dietistas", "psicologos", "terapeutas",
+    "centros de yoga", "centros de pilates", "centros de meditacion",
+    "quiropracticos", "osteopatas", "podologos",
     
-    # Otros
-    "hoteles", "hostels", "agencias de turismo", "rent a car", "fotografos",
-    "organizadores de eventos", "floristas", "imprentas", "graficas"
+    # ========== EDUCACIÓN Y CAPACITACIÓN (15) ==========
+    "institutos de idiomas", "academias de ingles", "escuelas de idiomas",
+    "academias de arte", "escuelas de musica", "conservatorios",
+    "centros de capacitacion", "centros de formacion profesional",
+    "guarderias", "jardines de infantes", "jardines maternales",
+    "centros de apoyo escolar", "profesores particulares", "clases particulares",
+    "centros de computacion",
+    
+    # ========== TURISMO Y HOTELERÍA (15) ==========
+    "hoteles", "hostels", "apart hoteles", "cabañas", "posadas",
+    "bed and breakfast", "agencias de turismo", "agencias de viajes",
+    "operadores turisticos", "rent a car", "alquiler de autos",
+    "alquiler de motos", "transporte turistico", "excursiones", "tours",
+    
+    # ========== EVENTOS Y ENTRETENIMIENTO (12) ==========
+    "fotografos", "fotografos profesionales", "estudios fotograficos",
+    "organizadores de eventos", "salones de fiestas", "quintas para eventos",
+    "DJ para eventos", "bandas musicales", "animacion infantil",
+    "alquiler de sonido", "alquiler de luces", "production de eventos",
+    
+    # ========== INDUSTRIA Y PRODUCCIÓN (15) ==========
+    "metalurgicas", "carpinterias", "talleres de soldadura", "torneros",
+    "fabricas de muebles", "aserraderos", "imprentas", "graficas",
+    "serigrafias", "rotulaciones", "ploteos", "empresas de packaging",
+    "fábricas de plástico", "fábricas de productos de limpieza", "textiles",
+    
+    # ========== AGRICULTURA Y GANADERÍA (10) ==========
+    "agronomos", "agroquimicas", "veterinarias rurales", "cabañas ganaderas",
+    "semillerias", "proveedores agricolas", "maquinaria agricola",
+    "criaderos de animales", "granjas", "tambos",
+    
+    # ========== TRANSPORTE Y LOGÍSTICA (12) ==========
+    "empresas de transporte", "logistica", "empresas de fletes", "mudanzas",
+    "transporte de cargas", "correos privados", "mensajerias", "courier",
+    "distribuidoras", "depositos", "almacenes", "galpones",
+    
+    # ========== TECNOLOGÍA Y COMUNICACIONES (10) ==========
+    "desarrollo de software", "programadores", "diseño web", "hosting",
+    "service de computadoras", "reparacion de celulares", "venta de celulares",
+    "accesorios de tecnologia", "CCTV", "camaras de seguridad",
+    
+    # ========== SERVICIOS FINANCIEROS Y SEGUROS (8) ==========
+    "aseguradoras", "productores de seguros", "gestorías", "gestoria automotor",
+    "escribanías", "tramites legales", "financieras", "prestamos",
+    
+    # ========== AUTOMOTOR (10) ==========
+    "concesionarias", "agencias de autos", "compra venta de autos usados",
+    "desarmaderos", "repuestos para autos", "autopartes", "accesorios para autos",
+    "polarizado de autos", "instalacion de alarmas", "audio para autos",
+    
+    # ========== DECORACIÓN Y HOGAR (10) ==========
+    "decoracion de interiores", "diseño de interiores", "cortinas y persianas",
+    "pisos y revestimientos", "alfombras", "pinturerias", "papeles pintados",
+    "mueblerias", "colchonerias", "bazar y menaje",
+    
+    # ========== MASCOTAS Y ANIMALES (8) ==========
+    "veterinarias", "pet shops", "peluqueria canina", "adiestramiento canino",
+    "guarderia para mascotas", "criaderos de perros", "acuarios", "alimento para mascotas",
+    
+    # ========== FLORES Y JARDINERÍA (8) ==========
+    "floristas", "florerías", "viveros", "plantas ornamentales",
+    "paisajismo", "diseño de jardines", "sistemas de riego", "jardineros",
 ]
 
-# Ciudades principales de países latinoamericanos de habla hispana
-CIUDADES_POR_PAIS = {
-    "Argentina": [
-        "Buenos Aires", "Córdoba", "Rosario", "Mendoza", "San Miguel de Tucumán",
-        "La Plata", "Mar del Plata", "Salta", "Santa Fe", "San Juan",
-        "Resistencia", "Neuquén", "Bahía Blanca", "Paraná"
-    ],
-    "México": [
-        "Ciudad de México", "Guadalajara", "Monterrey", "Puebla", "Tijuana",
-        "León", "Juárez", "Zapopan", "Mérida", "Querétaro",
-        "San Luis Potosí", "Aguascalientes", "Hermosillo", "Saltillo"
-    ],
-    "Colombia": [
-        "Bogotá", "Medellín", "Cali", "Barranquilla", "Cartagena",
-        "Cúcuta", "Bucaramanga", "Pereira", "Santa Marta", "Manizales"
-    ],
-    "Chile": [
-        "Santiago", "Valparaíso", "Concepción", "La Serena", "Antofagasta",
-        "Temuco", "Rancagua", "Talca", "Viña del Mar"
-    ],
-    "Perú": [
-        "Lima", "Arequipa", "Trujillo", "Chiclayo", "Cusco",
-        "Piura", "Iquitos", "Huancayo", "Tacna"
-    ],
-    "Ecuador": [
-        "Quito", "Guayaquil", "Cuenca", "Ambato", "Manta", "Portoviejo"
-    ],
-    "Bolivia": [
-        "La Paz", "Santa Cruz", "Cochabamba", "Sucre", "Tarija"
-    ],
-    "Paraguay": [
-        "Asunción", "Ciudad del Este", "Encarnación", "Pedro Juan Caballero"
-    ],
-    "Uruguay": [
-        "Montevideo", "Salto", "Paysandú", "Maldonado", "Rivera"
-    ],
-    "Venezuela": [
-        "Caracas", "Maracaibo", "Valencia", "Barquisimeto", "Maracay"
-    ],
-    "Costa Rica": [
-        "San José", "Alajuela", "Cartago", "Heredia", "Limón"
-    ],
-    "Panamá": [
-        "Ciudad de Panamá", "Colón", "David", "La Chorrera"
-    ],
-    "Guatemala": [
-        "Ciudad de Guatemala", "Quetzaltenango", "Escuintla", "Antigua Guatemala"
-    ],
-    "Honduras": [
-        "Tegucigalpa", "San Pedro Sula", "Choloma", "La Ceiba"
-    ],
-    "El Salvador": [
-        "San Salvador", "Santa Ana", "San Miguel", "Soyapango"
-    ],
-    "Nicaragua": [
-        "Managua", "León", "Masaya", "Granada"
-    ],
-    "República Dominicana": [
-        "Santo Domingo", "Santiago", "La Romana", "San Pedro de Macorís"
-    ]
-}
-
-PAISES = list(CIUDADES_POR_PAIS.keys())
+# =============================================================================
+# IMPORTAR BASE DE DATOS DE CIUDADES (2,000+ ciudades)
+# =============================================================================
+# Importamos desde el archivo cities_data.py para mantener el código limpio
+try:
+    from cities_data import CIUDADES_POR_PAIS, PAISES, TOTAL_CIUDADES, TOTAL_PAISES
+    log.info(f"✅ Base de ciudades cargada: {TOTAL_PAISES} países, {TOTAL_CIUDADES} ciudades")
+except ImportError:
+    # Fallback a lista reducida si no encuentra cities_data.py
+    log.warning("⚠️  cities_data.py no encontrado, usando lista reducida")
+    CIUDADES_POR_PAIS = {
+        "Argentina": ["Buenos Aires", "Córdoba", "Rosario", "Mendoza"],
+        "México": ["Ciudad de México", "Guadalajara", "Monterrey"],
+        "Colombia": ["Bogotá", "Medellín", "Cali"],
+    }
+    PAISES = list(CIUDADES_POR_PAIS.keys())
+    TOTAL_CIUDADES = sum(len(c) for c in CIUDADES_POR_PAIS.values())
+    TOTAL_PAISES = len(PAISES)
 
 # =============================================================================
 # LOGGER
@@ -298,7 +372,19 @@ class DomainHunterWorker:
         pais = tracking['pais']
         current_page = tracking['current_page']
         
-        query = f"{nicho} en {ciudad} {pais}"
+        # Mejorar query para obtener resultados más específicos
+        # Alternamos entre diferentes tipos de queries para obtener más variedad
+        query_modifiers = [
+            f"{nicho} en {ciudad}",  # Búsqueda básica
+            f"{nicho} {ciudad} contacto",  # Con contacto
+            f"{nicho} profesionales {ciudad}",  # Profesionales
+            f"empresas de {nicho} {ciudad}",  # Empresas de...
+        ]
+        
+        # Rotar el modificador según la página actual
+        query_index = current_page % len(query_modifiers)
+        query = query_modifiers[query_index]
+        
         start_result = current_page * 10  # SerpAPI paginación
         
         log.info(f"🎯 Rotación: {nicho} | {ciudad}, {pais} | Página {current_page + 1}")
@@ -339,11 +425,18 @@ class DomainHunterWorker:
             
             # 2. Actualizar tracking según resultados
             if len(domains_found) == 0:
-                # No hay más resultados - marcar como agotada y avanzar
-                await self._mark_combination_exhausted(user_id, nicho, ciudad, pais)
-                log.info(f"🏁 Combinación agotada. Rotando a siguiente...")
+                # 🎯 ESTRATEGIA MÁS PACIENTE: No marcar como agotada inmediatamente
+                # Solo después de múltiples intentos sin resultados
+                if current_page >= 2:
+                    # Ya buscamos en páginas 0, 1, 2 sin resultados → realmente agotada
+                    await self._mark_combination_exhausted(user_id, nicho, ciudad, pais)
+                    log.info(f"🏁 Combinación agotada (0 resultados en 3 intentos). Rotando a siguiente...")
+                else:
+                    # Primer o segundo intento → dar otra chance
+                    await self._increment_page(user_id, nicho, ciudad, pais, 0)
+                    log.info(f"⚠️  0 resultados (intento {current_page + 1}/3), continuando...")
             else:
-                # Hay resultados - incrementar página para próxima búsqueda
+                # ✅ Hay resultados - incrementar página para próxima búsqueda
                 await self._increment_page(user_id, nicho, ciudad, pais, len(domains_found))
                 log.info(f"📄 Próxima búsqueda: página {current_page + 2}")
             
@@ -402,21 +495,55 @@ class DomainHunterWorker:
             return None
     
     def _is_valid_domain(self, domain: str) -> bool:
-        """Verifica si un dominio es válido y no está en blacklist."""
+        """Verifica si un dominio es válido y no está en blacklist (mejorado)."""
         if not domain or len(domain) < 4:
             return False
         
-        # Verificar blacklist
-        for blacklisted in BLACKLIST_DOMAINS:
-            if blacklisted in domain:
-                return False
+        # Convertir a minúsculas para comparación
+        domain_lower = domain.lower()
         
-        # Verificar que tenga al menos un punto
+        # 1. Filtrar links de Google Maps y rutas
+        if domain_lower.startswith('/') or '/maps/' in domain_lower:
+            return False
+        
+        # 2. Filtrar dominios con caracteres raros o mal formados
+        if any(char in domain for char in ['[', ']', '{', '}', '|', '\\', ' ', '%']):
+            return False
+        
+        # 3. Verificar que tenga al menos un punto (TLD)
         if '.' not in domain:
             return False
         
-        # Verificar que no sea un link interno de Google
-        if 'google' in domain:
+        # 4. Filtrar dominios de ejemplo/prueba
+        if any(word in domain_lower for word in ['ejemplo', 'example', 'test', 'demo', 'sample']):
+            return False
+        
+        # 5. Verificar blacklist principal
+        for blacklisted in BLACKLIST_DOMAINS:
+            if blacklisted in domain_lower:
+                return False
+        
+        # 6. Verificar extensiones gubernamentales
+        for gov_tld in GOVERNMENT_TLD:
+            if gov_tld in domain_lower:
+                return False
+        
+        # 7. Filtrar dominios que son solo números o muy genéricos
+        parts = domain_lower.split('.')
+        if len(parts) < 2:
+            return False
+        
+        # El nombre debe tener al menos 3 caracteres (ej: abc.com es válido, ab.com no)
+        if len(parts[0]) < 3:
+            return False
+        
+        # 8. Filtrar portales muy conocidos por TLD
+        if domain_lower.endswith(('.blogspot.com', '.wordpress.com', '.wix.com', 
+                                   '.weebly.com', '.tumblr.com', '.github.io')):
+            return False
+        
+        # 9. Verificar que no sea email (algunos scrapers capturan mal)
+        if '@' in domain:
             return False
         
         return True
@@ -580,35 +707,64 @@ class DomainHunterWorker:
     async def _create_next_combination(self, user_id: str, current_nicho: str, current_ciudad: str, current_pais: str):
         """
         Crea la siguiente combinación para buscar.
-        Estrategia: rotar ciudad dentro del mismo país/nicho, luego país, luego nicho.
+        
+        ESTRATEGIA DE PROGRESIÓN INFINITA:
+        1. Siguiente ciudad en el MISMO país/nicho (completar país ciudad por ciudad)
+        2. Si terminó todas las ciudades → Siguiente PAÍS (mismo nicho)
+        3. Si terminó todos los países → Siguiente NICHO (primer país, primera ciudad)
+        4. Loop infinito: cuando termina todos los nichos, vuelve al primero
+        
+        Ejemplo de progresión:
+        - inmobiliarias | Buenos Aires, Argentina
+        - inmobiliarias | Córdoba, Argentina
+        - inmobiliarias | Rosario, Argentina
+        - ... (350 ciudades de Argentina)
+        - inmobiliarias | Ciudad de México, México
+        - inmobiliarias | Guadalajara, México
+        - ... (300 ciudades de México)
+        - ... (todos los países)
+        - estudios contables | Buenos Aires, Argentina (siguiente nicho)
+        
+        Esto genera ~250,000 combinaciones antes de repetir.
         """
         try:
-            # Rotar ciudad dentro del mismo país
-            ciudades = CIUDADES_POR_PAIS[current_pais]
+            # 1. Intentar siguiente CIUDAD en el mismo país/nicho
+            ciudades = CIUDADES_POR_PAIS.get(current_pais, [])
             current_index = ciudades.index(current_ciudad) if current_ciudad in ciudades else -1
             
-            if current_index < len(ciudades) - 1:
-                # Siguiente ciudad en el mismo país
+            if current_index >= 0 and current_index < len(ciudades) - 1:
+                # ✅ Hay más ciudades en este país → Siguiente ciudad
                 next_ciudad = ciudades[current_index + 1]
                 next_pais = current_pais
                 next_nicho = current_nicho
+                log.info(f"📍 Progresión: Siguiente ciudad en {current_pais}")
             else:
-                # Cambiar de país
+                # 2. No hay más ciudades → Intentar siguiente PAÍS (mismo nicho)
                 pais_index = PAISES.index(current_pais) if current_pais in PAISES else -1
                 
-                if pais_index < len(PAISES) - 1:
-                    # Siguiente país
+                if pais_index >= 0 and pais_index < len(PAISES) - 1:
+                    # ✅ Hay más países → Siguiente país, primera ciudad
                     next_pais = PAISES[pais_index + 1]
-                    next_ciudad = CIUDADES_POR_PAIS[next_pais][0]  # Primera ciudad del nuevo país
-                    next_nicho = current_nicho
-                else:
-                    # Cambiar de nicho y resetear país
-                    nicho_index = NICHOS.index(current_nicho) if current_nicho in NICHOS else -1
-                    next_nicho = NICHOS[(nicho_index + 1) % len(NICHOS)]  # Circular
-                    next_pais = PAISES[0]
                     next_ciudad = CIUDADES_POR_PAIS[next_pais][0]
+                    next_nicho = current_nicho
+                    log.info(f"🌎 Progresión: Completado {current_pais}, pasando a {next_pais}")
+                else:
+                    # 3. No hay más países → Siguiente NICHO (reiniciar países)
+                    nicho_index = NICHOS.index(current_nicho) if current_nicho in NICHOS else -1
+                    
+                    if nicho_index >= 0 and nicho_index < len(NICHOS) - 1:
+                        # ✅ Siguiente nicho
+                        next_nicho = NICHOS[nicho_index + 1]
+                    else:
+                        # ✅ Loop infinito: volver al primer nicho
+                        next_nicho = NICHOS[0]
+                        log.info(f"🔄 Ciclo completo terminado! Reiniciando desde el primer nicho")
+                    
+                    next_pais = PAISES[0]  # Primer país (Argentina)
+                    next_ciudad = CIUDADES_POR_PAIS[next_pais][0]  # Primera ciudad
+                    log.info(f"🎯 Progresión: Completado nicho '{current_nicho}', pasando a '{next_nicho}'")
             
-            # Verificar si ya existe
+            # Verificar si ya existe (evitar duplicados)
             existing = self.supabase.table("domain_search_tracking")\
                 .select("id")\
                 .eq("user_id", user_id)\
@@ -634,7 +790,9 @@ class DomainHunterWorker:
                     .insert(data)\
                     .execute()
                 
-                log.info(f"➕ Nueva combinación: {next_nicho} | {next_ciudad}, {next_pais}")
+                log.info(f"➕ Nueva: {next_nicho} | {next_ciudad}, {next_pais}")
+            else:
+                log.info(f"♻️  Ya existe: {next_nicho} | {next_ciudad}, {next_pais}")
             
         except Exception as e:
             log.error(f"❌ Error creando siguiente combinación: {e}")
