@@ -41,8 +41,8 @@ MAX_DELAY_BETWEEN_SEARCHES = 10  # Reducido de 90s a 10s
 # Cada cuánto checar por usuarios con bot enabled (en segundos)
 CHECK_USERS_INTERVAL = 60  # 1 minuto
 
-# Batch size: cuántos dominios agregar a la vez
-DOMAIN_BATCH_SIZE = 10  # Aumentado de 5 a 10 para mayor throughput
+# Batch size: cuántos dominios intentar agregar por búsqueda (solo los nuevos se insertan)
+DOMAIN_BATCH_SIZE = 20  # Más candidatos por ronda para que la cola PEND pueda crecer
 
 # User Agents para rotar
 USER_AGENTS = [
@@ -422,7 +422,12 @@ class DomainHunterWorker:
         return True
     
     async def _save_domains_to_supabase(self, user_id: str, domains: List[str]):
-        """Guarda dominios en la tabla leads del usuario."""
+        """Guarda dominios NUEVOS en la tabla leads del usuario.
+        
+        Usamos ignore_duplicates=True para que solo se inserten dominios que
+        no existan (user_id, domain). Así no re-encolamos dominios ya enviados
+        o fallidos, y PEND refleja solo los realmente nuevos en cola.
+        """
         try:
             leads_data = [
                 {
@@ -433,13 +438,14 @@ class DomainHunterWorker:
                 for domain in domains
             ]
             
-            # Upsert para evitar duplicados
+            # Solo insertar si no existe (no sobrescribir enviados/fallidos)
             self.supabase.table("leads").upsert(
                 leads_data,
-                on_conflict='user_id,domain'
+                on_conflict='user_id,domain',
+                ignore_duplicates=True,
             ).execute()
             
-            log.info(f"💾 {len(domains)} dominios guardados en Supabase")
+            log.info(f"💾 {len(domains)} dominios ofrecidos a la cola (solo nuevos se insertan)")
             
         except Exception as e:
             log.error(f"❌ Error guardando dominios: {e}")
