@@ -1,0 +1,204 @@
+================================================================================
+📊 ESTADO ACTUAL DE LA BASE DE DATOS - LEADSNIPER
+================================================================================
+Última actualización: 2026-02-06 00:47:25
+User ID: 38152119-7da4-442e-9826-20901c65f42e
+
+================================================================================
+✅ CONFIGURACIÓN DEL USUARIO
+================================================================================
+
+Bot Habilitado: ✅ SÍ (bot_enabled = true)
+Nicho actual: inmobiliarias
+Ciudades: Buenos Aires, Córdoba, Rosario
+País: Argentina
+Resend configurado: ✅ SÍ
+Email configurado: ✅ SÍ
+Bot activo: ✅ SÍ (is_active = true)
+Creado: 2026-02-05 04:35:01
+Última actualización: 2026-02-05 22:04:30
+
+================================================================================
+📊 ESTADÍSTICAS DE LEADS
+================================================================================
+
+TOTAL DE LEADS: 281
+
+Por Status:
+  - Enviados (sent): 167 ✅
+  - Fallidos (failed): 63 ⚠️
+  - Scrapeados sin email (scraped): 44 📄
+  - En proceso de scraping (scraping): 7 🔄
+  - Pendientes (pending): 0 ✅ (Cola vacía)
+  - En cola para envío (queued_for_send): 0 ✅ (Todo procesado)
+
+Leads con email encontrado: 170
+Tasa de éxito de emails: 60.5% (170/281)
+Tasa de envío exitoso: 98.2% (167/170)
+
+Últimos dominios agregados: Hace menos de 24 horas
+Rango de creación: 2026-02-05 15:39:04 hasta 2026-02-05 23:26:04
+
+================================================================================
+🚨 PROBLEMA IDENTIFICADO
+================================================================================
+
+❌ CRÍTICO: Tabla domain_search_tracking está VACÍA (0 filas)
+
+Esto significa:
+  - El Domain Hunter Worker NO tiene combinaciones para buscar
+  - No hay tracking de nicho/ciudad/país
+  - El bot NO PUEDE recopilar nuevos dominios
+  - Solo está procesando los 281 dominios que ya existen
+
+Por qué está vacío:
+  - El worker nunca inicializó el tracking, O
+  - Alguien borró los registros de tracking, O
+  - El worker no pudo crear las combinaciones iniciales
+
+================================================================================
+✅ QUÉ SÍ ESTÁ FUNCIONANDO
+================================================================================
+
+1. LeadSniper Worker (main.py): ✅ FUNCIONANDO
+   - Está scrapeando dominios
+   - Está enviando emails
+   - Último log: hace pocos minutos (00:47:25)
+   - Procesando dominios correctamente
+
+2. Configuración de usuario: ✅ CORRECTA
+   - Bot habilitado
+   - Resend configurado
+   - Credenciales OK
+
+3. Base de datos: ✅ OPERATIVA
+   - hunter_configs: 1 usuario
+   - leads: 281 dominios
+   - hunter_logs: 3,447 logs (sistema activo)
+   - domain_search_tracking: 0 (❌ PROBLEMA)
+
+================================================================================
+❌ QUÉ NO ESTÁ FUNCIONANDO
+================================================================================
+
+1. Domain Hunter Worker: ⚠️ PARCIALMENTE
+   - El worker está corriendo (se ven logs de "domain_added")
+   - PERO no está agregando dominios nuevos
+   - Razón: Tabla domain_search_tracking vacía
+   - No tiene combinaciones (nicho/ciudad/país) para buscar
+
+2. Sistema de Rotación Inteligente: ❌ NO INICIALIZADO
+   - 0 combinaciones de búsqueda
+   - 0 combinaciones activas
+   - El bot no sabe qué buscar en Google
+
+================================================================================
+📝 LOGS RECIENTES (Últimos 10 minutos)
+================================================================================
+
+00:47:25 - ✅ Email enviado a veneziayasociados.com
+00:47:06 - ✅ Email enviado a jbsrur.com.ar
+00:46:48 - ✅ Email enviado a sergiovillella.com
+00:46:26 - 📧 Email encontrado en veneziayasociados.com
+00:46:26 - ⚠️  No se encontró email en cordobaprop.com
+00:45:50 - 🔍 Iniciando scraping de veneziayasociados.com
+00:45:41 - ✅ 5 dominios nuevos agregados a la cola
+
+Nota: Se ve el mensaje "5 dominios nuevos agregados" pero estos son 
+      probablemente DUPLICADOS de búsquedas anteriores, no dominios realmente nuevos.
+
+================================================================================
+🔍 DOMINIOS RECIENTES PROCESADOS
+================================================================================
+
+Últimos 5 dominios:
+1. booking.com - ✅ sent (email: customer.service@booking.com)
+2. altacordoba.com.ar - ❌ failed
+3. m.yelp.com - 📄 scraped (sin email)
+4. bahia.gob.ar - 📄 scraped (sin email)
+5. dprneuquen.gob.ar - ✅ sent (email: dpto_sellos@dprneuquen.gob.ar)
+
+Observación: Hay muchos dominios de gobierno (.gob.ar) y portales genéricos
+             (booking.com, yelp.com) que NO son inmobiliarias reales.
+             Esto indica que el bot necesita mejor filtrado.
+
+================================================================================
+🎯 DIAGNÓSTICO FINAL
+================================================================================
+
+PROBLEMA PRINCIPAL:
+  El Domain Hunter Worker no puede agregar dominios NUEVOS porque la tabla
+  domain_search_tracking está vacía. Sin tracking, el bot no sabe qué
+  combinaciones (nicho + ciudad + país) buscar en Google.
+
+SÍNTOMAS:
+  - 281 dominios existentes (todos de ayer)
+  - 0 dominios nuevos hoy
+  - Tabla tracking vacía
+  - Logs muestran procesamiento pero no búsquedas nuevas
+
+CAUSA:
+  El sistema de tracking nunca se inicializó correctamente, o se borró.
+
+IMPACTO:
+  - El bot está "trabado" procesando los 281 dominios viejos
+  - NO está buscando dominios nuevos en Google
+  - La rotación inteligente de nichos/ciudades/países no funciona
+
+================================================================================
+✅ SOLUCIÓN NECESARIA
+================================================================================
+
+PASO 1: Crear el tracking inicial
+  - Insertar combinaciones de búsqueda en domain_search_tracking
+  - Inicializar con inmobiliarias en Buenos Aires, Córdoba, Rosario
+
+PASO 2: Verificar SERPAPI_KEY
+  - Revisar que esté configurada en .env
+  - Sin esta key, el bot NO PUEDE buscar en Google
+
+PASO 3: Reiniciar el Domain Hunter Worker
+  - Detener python domain_hunter_worker.py
+  - Iniciar nuevamente
+  - Verificar que empiece a buscar
+
+PASO 4: Monitorear
+  - Ver que se agreguen dominios nuevos
+  - Verificar logs de búsqueda en SerpAPI
+
+================================================================================
+📋 PRÓXIMOS PASOS
+================================================================================
+
+1. Ejecutar los comandos SQL de inicialización (ver archivo adjunto)
+2. Verificar SERPAPI_KEY en .env
+3. Reiniciar domain_hunter_worker.py
+4. Esperar 2-3 minutos
+5. Verificar que aparezcan nuevos registros en domain_search_tracking
+6. Verificar que se agreguen dominios nuevos a la tabla leads
+
+================================================================================
+💡 NOTAS ADICIONALES
+================================================================================
+
+- El LeadSniper (main.py) está funcionando perfecto
+- La tasa de envío de emails es excelente (98.2%)
+- La tasa de encontrar emails es buena (60.5%)
+- El único problema es que el Domain Hunter no está agregando dominios NUEVOS
+- Una vez solucionado el tracking, el bot debería empezar a buscar automáticamente
+
+================================================================================
+🆘 SI EL PROBLEMA PERSISTE
+================================================================================
+
+Después de ejecutar los SQL y reiniciar el worker:
+
+1. Revisar logs del worker en la terminal
+2. Verificar que diga "SerpAPI configurada"
+3. Verificar que diga "1 usuario(s) con bot activo"
+4. Verificar que diga "Rotación: [nicho] | [ciudad], [país]"
+5. Revisar créditos de SerpAPI en https://serpapi.com/dashboard
+
+================================================================================
+FIN DEL REPORTE
+================================================================================

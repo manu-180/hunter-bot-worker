@@ -295,7 +295,7 @@ class MailerService:
             </div>
             
             <div class="highlight-box" style="margin-top: 20px;">
-                <p style="font-size: 15px;">Un empleado que trabaja todo el día por vos, sin descanso, respondiendo mensajes y agendando reuniones. Por <strong>USD 50 al mes</strong>. Ningún ser humano aceptaría eso.</p>
+                <p style="font-size: 15px;">Un empleado que trabaja todo el día por vos, sin descanso, respondiendo mensajes y agendando reuniones.</p>
             </div>
             
             <div class="urgency">

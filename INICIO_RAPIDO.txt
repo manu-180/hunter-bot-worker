@@ -1,0 +1,267 @@
+================================================================================
+🚀 GUÍA DE INICIO RÁPIDO - DIAGNÓSTICO DEL BOT
+================================================================================
+
+Si tu bot NO está recopilando dominios, sigue estos pasos:
+
+================================================================================
+PASO 1: Generar reporte automático de tu base de datos
+================================================================================
+
+En la terminal, ejecuta:
+
+  python generar_reporte_db.py
+
+Esto creará un archivo 'reporte_db_{timestamp}.txt' con TODA la información
+de tu base de datos: configuraciones, tracking, leads, logs, etc.
+
+⏱️  Tiempo: 10 segundos
+
+================================================================================
+PASO 2: Revisar el reporte y identificar el problema
+================================================================================
+
+Abre el archivo generado y busca la sección "6. VERIFICACIÓN DE SALUD DEL SISTEMA"
+
+Esto te dirá exactamente qué está mal:
+
+  ✅ Bot habilitado: 1 usuario(s)
+  ❌ SERPAPI_KEY NO configurada en .env  <-- PROBLEMA ENCONTRADO
+  ✅ Tracking activo: 15 combinaciones
+  ❌ Dominios recientes: NINGUNO en las últimas 24h
+
+⏱️  Tiempo: 1 minuto
+
+================================================================================
+PASO 3: Ejecutar diagnóstico SQL completo (opcional)
+================================================================================
+
+Si quieres ver los datos directamente en Supabase:
+
+1. Ir a Supabase SQL Editor
+2. Abrir el archivo: diagnostico_bot.sql
+3. Copiar TODO el contenido
+4. Pegar en SQL Editor
+5. Ejecutar
+
+Esto te mostrará:
+  - Usuarios con bot activo
+  - Estado del tracking
+  - Dominios en la base de datos
+  - Logs del bot
+  - Estadísticas globales
+
+⏱️  Tiempo: 2 minutos
+
+================================================================================
+PASO 4: Aplicar la solución correspondiente
+================================================================================
+
+Basado en el problema encontrado, ejecuta la solución en Supabase SQL Editor:
+
+PROBLEMA: Bot NO habilitado
+SOLUCIÓN:
+  -- Reemplazar 'TU_USER_ID' con tu user_id real
+  UPDATE hunter_configs 
+  SET bot_enabled = true
+  WHERE user_id = 'TU_USER_ID';
+
+----
+
+PROBLEMA: Falta SERPAPI_KEY
+SOLUCIÓN:
+  1. Ir a https://serpapi.com/
+  2. Crear cuenta (plan gratuito: 100 búsquedas/mes)
+  3. Copiar tu API Key
+  4. Agregar al archivo .env:
+     SERPAPI_KEY=tu_serpapi_key_aqui
+
+----
+
+PROBLEMA: Tracking agotado
+SOLUCIÓN:
+  DELETE FROM domain_search_tracking WHERE user_id = 'TU_USER_ID';
+
+----
+
+PROBLEMA: Worker no está corriendo
+SOLUCIÓN:
+  # En la terminal 1:
+  python domain_hunter_worker.py
+
+  # En la terminal 2:
+  python main.py
+
+⏱️  Tiempo: 5 minutos
+
+================================================================================
+PASO 5: Verificar que funcione
+================================================================================
+
+Opción A - Usando el script Python:
+  
+  python generar_reporte_db.py
+
+  # Abrir el nuevo reporte y buscar:
+  # "✅ Dominios recientes: X en las últimas 24h"
+
+Opción B - Usando SQL:
+  
+  SELECT domain, status, created_at
+  FROM leads
+  WHERE user_id = 'TU_USER_ID'
+  ORDER BY created_at DESC
+  LIMIT 20;
+
+Deberías ver dominios nuevos apareciendo.
+
+⏱️  Tiempo: 2 minutos
+
+================================================================================
+📊 CÓMO OBTENER TU USER_ID
+================================================================================
+
+Si no sabes tu user_id, ejecuta en Supabase SQL Editor:
+
+  SELECT id as user_id, email
+  FROM auth.users
+  ORDER BY created_at DESC;
+
+Copia el 'id' de tu usuario.
+
+================================================================================
+🔍 SOLUCIÓN EXPRESS (si tienes prisa)
+================================================================================
+
+Ejecuta estos comandos en Supabase SQL Editor:
+
+  -- 1. Ver tu user_id
+  SELECT id as user_id, email FROM auth.users;
+
+  -- 2. Activar bot (reemplaza USER_ID)
+  UPDATE hunter_configs 
+  SET bot_enabled = true 
+  WHERE user_id = 'PEGA_TU_USER_ID_AQUI';
+
+  -- 3. Resetear tracking
+  DELETE FROM domain_search_tracking 
+  WHERE user_id = 'PEGA_TU_USER_ID_AQUI';
+
+  -- 4. Verificar
+  SELECT 
+    (SELECT bot_enabled FROM hunter_configs WHERE user_id = 'PEGA_TU_USER_ID_AQUI') as bot_activo,
+    (SELECT COUNT(*) FROM leads WHERE user_id = 'PEGA_TU_USER_ID_AQUI') as total_leads;
+
+Luego:
+  1. Verifica que .env tenga SERPAPI_KEY
+  2. Ejecuta: python domain_hunter_worker.py
+  3. Espera 1-2 minutos
+  4. Verifica que se agreguen dominios
+
+⏱️  Tiempo total: 3 minutos
+
+================================================================================
+📁 ARCHIVOS DISPONIBLES
+================================================================================
+
+1. generar_reporte_db.py
+   - Script Python que genera un reporte completo automático
+   - Ejecutar: python generar_reporte_db.py
+
+2. diagnostico_bot.sql
+   - Queries SQL para ver toda la información en Supabase
+   - Ejecutar en Supabase SQL Editor
+
+3. soluciones_bot.sql
+   - Comandos SQL para solucionar problemas comunes
+   - Copiar y pegar en Supabase SQL Editor
+
+4. DIAGNOSTICO_BOT_README.txt
+   - Guía completa con explicaciones detalladas
+   - Leer para entender cómo funciona el sistema
+
+5. INICIO_RAPIDO.txt
+   - Este archivo (pasos rápidos)
+
+================================================================================
+❓ PREGUNTAS FRECUENTES
+================================================================================
+
+P: ¿Por qué mi bot no está recopilando dominios?
+
+R: Las causas más comunes son (en orden):
+   1. Bot no habilitado (bot_enabled = false)
+   2. Falta SERPAPI_KEY en .env
+   3. Worker no está corriendo (domain_hunter_worker.py)
+   4. Tracking agotado (todas las combinaciones exhausted)
+   5. SerpAPI sin créditos
+
+----
+
+P: ¿Debo correr los 2 workers?
+
+R: SÍ. Necesitas 2 terminales:
+   - Terminal 1: domain_hunter_worker.py (recopila dominios)
+   - Terminal 2: main.py (procesa dominios y envía emails)
+
+----
+
+P: ¿Cuántos dominios debería estar agregando?
+
+R: Con SerpAPI plan gratuito (100 búsquedas/mes):
+   - ~60-120 dominios por mes
+   - ~2-4 dominios por día
+
+----
+
+P: ¿Cómo sé si el bot está funcionando?
+
+R: Ejecuta:
+   python generar_reporte_db.py
+   
+   Busca en el reporte:
+   "✅ Dominios recientes: X en las últimas 24h"
+   
+   Si X > 0, el bot está funcionando.
+
+----
+
+P: ¿Puedo cambiar el nicho que busca el bot?
+
+R: El bot tiene ROTACIÓN AUTOMÁTICA entre 50+ nichos, 17 países, 
+   y 100+ ciudades. No necesitas configurar nada manualmente.
+   
+   Si quieres forzar un nicho específico, edita hunter_configs:
+   
+   UPDATE hunter_configs 
+   SET nicho = 'tu_nicho', pais = 'tu_pais'
+   WHERE user_id = 'TU_USER_ID';
+
+================================================================================
+🆘 AYUDA ADICIONAL
+================================================================================
+
+Si después de seguir todos los pasos el bot TODAVÍA no funciona:
+
+1. Revisa los logs del worker en la terminal:
+   - ¿Muestra errores?
+   - ¿Dice "SerpAPI key not configured"?
+   - ¿Dice "No hay usuarios con bot habilitado"?
+
+2. Revisa los logs en la base de datos:
+   SELECT * FROM hunter_logs 
+   WHERE user_id = 'TU_USER_ID' 
+   ORDER BY created_at DESC 
+   LIMIT 50;
+
+3. Verifica créditos de SerpAPI:
+   https://serpapi.com/dashboard
+
+4. Revisa el archivo DIAGNOSTICO_BOT_README.txt para más detalles
+
+================================================================================
+
+💡 TIP: Si ejecutas 'python generar_reporte_db.py' periódicamente,
+    puedes ver el progreso del bot en tiempo real.
+
+================================================================================

@@ -1,0 +1,249 @@
+================================================================================
+🚨 PROBLEMA ENCONTRADO Y SOLUCIÓN
+================================================================================
+
+PROBLEMA:
+  El bot Domain Hunter Worker NO está recopilando dominios nuevos porque
+  la tabla "domain_search_tracking" está VACÍA (0 filas).
+
+  Sin tracking, el bot no sabe qué combinaciones (nicho + ciudad + país)
+  buscar en Google.
+
+SÍNTOMAS QUE CONFIRMAN EL PROBLEMA:
+  ✅ Bot habilitado (bot_enabled = true)
+  ✅ LeadSniper funcionando (procesando emails)
+  ❌ domain_search_tracking: 0 filas
+  ❌ No se agregan dominios NUEVOS desde ayer
+  ❌ Los 281 leads existentes son todos de ayer
+
+================================================================================
+✅ SOLUCIÓN EN 4 PASOS (15 minutos)
+================================================================================
+
+PASO 1: Ejecutar SQL para crear el tracking inicial
+────────────────────────────────────────────────────
+
+1. Ir a Supabase SQL Editor
+2. Abrir el archivo: SOLUCION_TRACKING_VACIO.sql
+3. Copiar TODO el contenido desde "PASO 2: Crear combinaciones iniciales"
+4. Pegar en SQL Editor
+5. Ejecutar
+
+Esto creará 30 combinaciones de búsqueda:
+  - 10 nichos diferentes
+  - 3 ciudades (Buenos Aires, Córdoba, Rosario)
+  - Argentina
+
+⏱️  Tiempo: 2 minutos
+
+
+PASO 2: Verificar que se crearon las combinaciones
+───────────────────────────────────────────────────
+
+Ejecutar esta query:
+
+  SELECT COUNT(*) FROM domain_search_tracking 
+  WHERE user_id = '38152119-7da4-442e-9826-20901c65f42e';
+
+Resultado esperado: 30
+
+Si ves 30, ✅ PERFECTO, continuar al paso 3.
+Si ves 0, ❌ hubo un error, revisar logs de Supabase.
+
+⏱️  Tiempo: 30 segundos
+
+
+PASO 3: Verificar SERPAPI_KEY en .env
+──────────────────────────────────────
+
+Abrir el archivo .env y verificar que tenga:
+
+  SERPAPI_KEY=tu_serpapi_key_aqui
+
+Si NO está configurada:
+  1. Ir a https://serpapi.com/
+  2. Crear cuenta (plan gratuito: 100 búsquedas/mes)
+  3. Copiar tu API Key
+  4. Agregar al .env: SERPAPI_KEY=tu_key
+
+⏱️  Tiempo: 5 minutos (si necesitas crear cuenta)
+
+
+PASO 4: Reiniciar el Domain Hunter Worker
+──────────────────────────────────────────
+
+1. Si domain_hunter_worker.py está corriendo, detenerlo (Ctrl+C)
+2. Ejecutar nuevamente:
+
+   python domain_hunter_worker.py
+
+3. Verificar en la terminal que muestre:
+
+   🔍 DOMAIN HUNTER WORKER - Iniciando
+   ✅ SerpAPI configurada
+   👥 1 usuario(s) con bot activo
+   🎯 Rotación: inmobiliarias | Buenos Aires, Argentina | Página 1
+   🔍 Query SerpAPI: "inmobiliarias en Buenos Aires Argentina"
+   📊 SerpAPI devolvió 20 resultados
+   ✅ Encontrados 15 dominios válidos
+
+4. Si ves esto, ✅ EL BOT ESTÁ FUNCIONANDO!
+
+⏱️  Tiempo: 2 minutos
+
+================================================================================
+📊 VERIFICAR QUE FUNCIONE
+================================================================================
+
+OPCIÓN A - Ver en Supabase (30 segundos):
+──────────────────────────────────────────
+
+Ejecutar:
+
+  SELECT domain, created_at 
+  FROM leads 
+  WHERE user_id = '38152119-7da4-442e-9826-20901c65f42e'
+  ORDER BY created_at DESC 
+  LIMIT 10;
+
+Si ves dominios con fecha/hora de HOY (no de ayer), ✅ FUNCIONA!
+
+
+OPCIÓN B - Ver en la terminal del worker:
+──────────────────────────────────────────
+
+Deberías ver cada 10-60 segundos mensajes como:
+
+  🎯 Rotación: agencias de marketing | Córdoba, Argentina | Página 1
+  🔍 Query SerpAPI: "agencias de marketing en Córdoba Argentina"
+  ✅ Encontrados 12 dominios válidos
+  💾 12 dominios ofrecidos a la cola (solo nuevos se insertan)
+
+
+OPCIÓN C - Ver el tracking:
+────────────────────────────
+
+Ejecutar:
+
+  SELECT nicho, ciudad, current_page, total_domains_found, last_searched_at
+  FROM domain_search_tracking
+  WHERE user_id = '38152119-7da4-442e-9826-20901c65f42e'
+  ORDER BY last_searched_at DESC NULLS LAST
+  LIMIT 5;
+
+Deberías ver:
+  - last_searched_at con fechas RECIENTES (no NULL)
+  - total_domains_found aumentando
+  - current_page incrementándose
+
+================================================================================
+🆘 SI SIGUE SIN FUNCIONAR
+================================================================================
+
+1. Verificar terminal del worker:
+   ¿Muestra errores? ¿Dice "SerpAPI key not configured"?
+
+2. Verificar créditos de SerpAPI:
+   https://serpapi.com/dashboard
+   ¿Tienes créditos disponibles?
+
+3. Revisar logs en Supabase:
+   SELECT * FROM hunter_logs 
+   WHERE user_id = '38152119-7da4-442e-9826-20901c65f42e' 
+   ORDER BY created_at DESC LIMIT 20;
+
+4. Verificar que AMBOS workers estén corriendo:
+   Terminal 1: python domain_hunter_worker.py
+   Terminal 2: python main.py
+
+5. Revisar archivo .env:
+   - SERPAPI_KEY configurada
+   - SUPABASE_URL correcta
+   - SUPABASE_KEY correcta
+
+================================================================================
+📝 EXPLICACIÓN TÉCNICA (para entender qué pasó)
+================================================================================
+
+Tu sistema tiene 2 workers:
+
+1. domain_hunter_worker.py (Recolector)
+   - Busca dominios en Google usando SerpAPI
+   - Guarda en tabla "leads" con status "pending"
+   - Usa tabla "domain_search_tracking" para saber QUÉ buscar
+
+2. main.py (Procesador)
+   - Toma dominios "pending" de la tabla "leads"
+   - Los scrapea para buscar emails
+   - Envía emails a los que tienen email
+
+El problema:
+  - Worker 2 (main.py) estaba funcionando ✅
+  - Worker 1 (domain_hunter_worker.py) NO estaba agregando dominios ❌
+  - Razón: domain_search_tracking vacío (0 combinaciones)
+  - Sin combinaciones, el worker no sabía qué buscar
+
+La solución:
+  - Crear 30 combinaciones en domain_search_tracking
+  - El worker las va a usar para buscar en Google
+  - Va a empezar a agregar dominios nuevos automáticamente
+
+Cómo funciona el sistema de rotación:
+  1. Worker lee domain_search_tracking
+  2. Toma la combinación con menor "current_page" y "is_exhausted = false"
+  3. Busca en SerpAPI: "{nicho} en {ciudad} {país}"
+  4. Guarda dominios encontrados en "leads"
+  5. Incrementa "current_page" para la próxima búsqueda
+  6. Cuando no encuentra más, marca "is_exhausted = true"
+  7. Pasa a la siguiente combinación
+  8. Cuando todas están exhausted, resetea y empieza de nuevo
+
+================================================================================
+📁 ARCHIVOS CREADOS PARA TI
+================================================================================
+
+1. ESTADO_ACTUAL_BASE_DATOS.txt
+   - Contexto completo de tu base de datos
+   - Estado actual de todas las tablas
+   - Diagnóstico del problema
+
+2. SOLUCION_TRACKING_VACIO.sql
+   - Comandos SQL listos para copiar/pegar
+   - Crea las 30 combinaciones de búsqueda
+   - Queries de monitoreo y verificación
+
+3. SOLUCION_RAPIDA.txt (este archivo)
+   - Pasos exactos para solucionar
+   - Verificaciones y troubleshooting
+   - Explicación técnica
+
+================================================================================
+✅ CHECKLIST FINAL
+================================================================================
+
+Antes de cerrar, verifica:
+
+[ ] Ejecutaste el SQL de SOLUCION_TRACKING_VACIO.sql (PASO 2)
+[ ] Verificaste que se crearon 30 combinaciones
+[ ] Verificaste que SERPAPI_KEY está en .env
+[ ] Reiniciaste domain_hunter_worker.py
+[ ] Viste en la terminal mensajes de búsqueda
+[ ] Verificaste que se están agregando dominios NUEVOS
+[ ] Ambos workers están corriendo (domain_hunter_worker.py y main.py)
+
+Si todos están marcados, ✅ EL SISTEMA ESTÁ FUNCIONANDO CORRECTAMENTE!
+
+================================================================================
+💡 TIPS PARA EL FUTURO
+================================================================================
+
+- El bot tiene rotación automática de 50+ nichos, 17 países, 100+ ciudades
+- No necesitas configurar manualmente qué buscar
+- Si quieres cambiar el foco, edita hunter_configs (nicho, ciudades, pais)
+- El sistema resetea automáticamente cuando todas las combinaciones se agotan
+- Con SerpAPI plan gratuito (100 búsquedas/mes): ~60-120 dominios/mes
+- Considera upgrade a plan pagado si necesitas más dominios
+
+================================================================================
+FIN - ¡Buena suerte con tu bot! 🚀
+================================================================================
