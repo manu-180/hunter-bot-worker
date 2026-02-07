@@ -10,7 +10,7 @@ echo ""
 
 # Iniciar domain_hunter_worker.py en background
 echo "[LAUNCHER] Starting Domain Hunter Worker..."
-python -u domain_hunter_worker.py 2>&1 | sed 's/^/[DOMAIN-HUNTER] /' &
+python -u domain_hunter_worker.py 2>&1 | sed --line-buffered 's/^/[DOMAIN-HUNTER] /' &
 DOMAIN_PID=$!
 echo "[LAUNCHER] Domain Hunter PID: $DOMAIN_PID"
 
@@ -19,7 +19,7 @@ sleep 2
 
 # Iniciar main.py en background
 echo "[LAUNCHER] Starting LeadSniper Worker..."
-python -u main.py 2>&1 | sed 's/^/[LEADSNIPER] /' &
+python -u main.py 2>&1 | sed --line-buffered 's/^/[LEADSNIPER] /' &
 LEADSNIPER_PID=$!
 echo "[LAUNCHER] LeadSniper PID: $LEADSNIPER_PID"
 

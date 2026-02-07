@@ -45,7 +45,7 @@ CHECK_USERS_INTERVAL = 60  # 1 minuto
 # HORARIO INTELIGENTE - Pausar búsquedas de noche para no gastar SerpAPI
 # =============================================================================
 BUSINESS_HOURS_START = 8   # 8 AM (hora Argentina)
-BUSINESS_HOURS_END = 20    # 8 PM (hora Argentina) - EXTENDIDO
+BUSINESS_HOURS_END = 21    # 9 PM (hora Argentina) - EXTENDIDO +1h
 PAUSE_CHECK_INTERVAL = 300  # Revisar cada 5 minutos cuando está pausado
 
 # Batch size: cuántos dominios intentar agregar por búsqueda (solo los nuevos se insertan)
@@ -309,7 +309,7 @@ class DomainHunterWorker:
         utc_hour = utc_now.hour
         argentina_hour = (utc_hour - 3) % 24
         argentina_min = utc_now.minute
-        log.info(f"\n🔖 VERSION: horario_extended_v3 | HORARIO EXTENDIDO HASTA 20:00")
+        log.info(f"\n🔖 VERSION: horario_extended_v4 | HORARIO EXTENDIDO HASTA 21:00")
         log.info(f"🕐 HORA ACTUAL: Argentina={argentina_hour:02d}:{argentina_min:02d} | UTC={utc_hour:02d}:{argentina_min:02d}")
         log.info(f"🕐 HORARIO LABORAL: {BUSINESS_HOURS_START}:00 - {BUSINESS_HOURS_END}:00 (hora Argentina)")
         log.info(f"🛡️ GUARDIA DOBLE: check en _main_loop() + check en _search_domains_for_user()")
@@ -321,6 +321,47 @@ class DomainHunterWorker:
         log.info(f"📦 Batch size: {DOMAIN_BATCH_SIZE} dominios")
         log.info(f"🌍 Total países: {TOTAL_PAISES} | Total ciudades: {TOTAL_CIUDADES}")
         log.info(f"🎯 Total nichos disponibles: {len(NICHOS)}\n")
+        
+        # =================================================================
+        # TEST DE CONECTIVIDAD AL INICIO
+        # =================================================================
+        log.info("="*70)
+        log.info("🧪 TEST DE CONECTIVIDAD - Verificando servicios...")
+        log.info("="*70)
+        
+        # Test 1: Supabase
+        try:
+            test_response = self.supabase.table("hunter_configs").select("user_id").limit(1).execute()
+            log.info(f"✅ SUPABASE: Conexión OK ({len(test_response.data)} registros de prueba)")
+        except Exception as e:
+            log.error(f"❌ SUPABASE: ERROR DE CONEXIÓN: {e}")
+            import traceback
+            log.error(f"   Traceback: {traceback.format_exc()}")
+            log.error("   El worker NO podrá funcionar sin Supabase. Abortando.")
+            return
+        
+        # Test 2: SerpAPI (búsqueda mínima para verificar que la API key funciona)
+        try:
+            test_params = {
+                "q": "test",
+                "num": 1,
+                "api_key": self.serpapi_key
+            }
+            test_search = GoogleSearch(test_params)
+            test_result = await asyncio.to_thread(test_search.get_dict)
+            search_info = test_result.get("search_information", {})
+            log.info(f"✅ SERPAPI: Conexión OK (query de prueba exitosa, {search_info.get('total_results', 'N/A')} resultados)")
+        except Exception as e:
+            log.error(f"❌ SERPAPI: ERROR DE CONEXIÓN: {e}")
+            import traceback
+            log.error(f"   Traceback: {traceback.format_exc()}")
+            log.error("   Verifica que SERPAPI_KEY sea válida y que haya créditos disponibles.")
+            log.error("   El worker NO podrá buscar dominios sin SerpAPI. Abortando.")
+            return
+        
+        log.info("="*70)
+        log.info("✅ TODOS LOS SERVICIOS CONECTADOS - Iniciando loop principal")
+        log.info("="*70 + "\n")
         
         try:
             await self._main_loop()
@@ -519,8 +560,9 @@ class DomainHunterWorker:
                 f"UTC {utc_now.hour:02d}:{argentina_min:02d} | Query: \"{query}\""
             )
             
-            # Ejecutar búsqueda
-            search = await asyncio.to_thread(GoogleSearch(params).get_dict)
+            # Ejecutar búsqueda (separar objeto de método para evitar garbage collection)
+            search_obj = GoogleSearch(params)
+            search = await asyncio.to_thread(search_obj.get_dict)
             organic_results = search.get("organic_results", [])
             
             log.info(f"📊 SerpAPI devolvió {len(organic_results)} resultados")
@@ -565,7 +607,9 @@ class DomainHunterWorker:
             return list(domains_found)
             
         except Exception as e:
+            import traceback
             log.error(f"❌ Error en búsqueda SerpAPI: {e}")
+            log.error(f"   Traceback completo: {traceback.format_exc()}")
             return []
     
     def _extract_domain_from_search_link(self, href: str) -> str | None:
