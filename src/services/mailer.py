@@ -72,7 +72,7 @@ class MailerService:
             with open(template_path, 'r', encoding='utf-8') as f:
                 return f.read()
         
-        # Default template
+        # Default template - BotLode branded, iframe matches botlode_web/index.html
         return """
 <!DOCTYPE html>
 <html>
@@ -84,535 +84,513 @@ class MailerService:
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
             line-height: 1.7;
             color: #1a1a1a;
-            max-width: 600px;
+            max-width: 620px;
             margin: 0 auto;
             padding: 0;
-            background: #0a0a0a;
+            background: #050505;
+        }
+        .wrapper {
+            background: #050505;
+            padding: 20px 12px;
         }
         .container {
             background: #ffffff;
-            margin: 20px;
             border-radius: 16px;
             overflow: hidden;
-            box-shadow: 0 20px 60px rgba(255, 193, 7, 0.15);
+            box-shadow: 0 4px 40px rgba(255, 192, 0, 0.12);
         }
+
+        /* ── HEADER ── */
         .header {
-            background: linear-gradient(135deg, #FFC107 0%, #FF9800 50%, #F57C00 100%);
-            color: #000;
-            padding: 40px 30px;
+            background: linear-gradient(135deg, #050505 0%, #111 100%);
+            padding: 36px 30px 32px;
             text-align: center;
-            position: relative;
+            border-bottom: 3px solid #FFC000;
         }
-        .header h1 {
+        .brand-name {
+            font-size: 36px;
+            font-weight: 900;
+            color: #FFC000;
+            letter-spacing: -1px;
+            margin: 0 0 4px 0;
+        }
+        .brand-sub {
+            font-size: 12px;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            color: #888;
             margin: 0;
-            font-size: 28px;
-            font-weight: 800;
-            text-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
-        .emoji-bot {
-            font-size: 64px;
-            margin-bottom: 10px;
-            animation: float 3s ease-in-out infinite;
+        .header-title {
+            font-size: 22px;
+            font-weight: 700;
+            color: #fff;
+            margin: 20px 0 0 0;
+            line-height: 1.35;
         }
-        @keyframes float {
-            0%, 100% { transform: translateY(0px); }
-            50% { transform: translateY(-10px); }
-        }
+
+        /* ── CONTENT ── */
         .content {
-            padding: 40px 35px;
+            padding: 36px 32px;
             background: #ffffff;
         }
+        .greeting {
+            font-size: 16px;
+            color: #333;
+            margin: 0 0 18px 0;
+        }
         .hook {
-            font-size: 20px;
+            font-size: 19px;
             font-weight: 700;
-            color: #F57C00;
-            margin-bottom: 20px;
+            color: #D48800;
+            margin: 24px 0 16px 0;
             line-height: 1.4;
         }
+        .body-text {
+            font-size: 15px;
+            color: #444;
+            margin: 0 0 16px 0;
+            line-height: 1.7;
+        }
+
+        /* ── HIGHLIGHT BOX ── */
         .highlight-box {
-            background: linear-gradient(135deg, #FFF9C4 0%, #FFE082 100%);
-            border-left: 4px solid #FFC107;
-            padding: 20px;
-            margin: 25px 0;
-            border-radius: 8px;
+            background: #FFFBEB;
+            border-left: 4px solid #FFC000;
+            padding: 18px 20px;
+            margin: 24px 0;
+            border-radius: 0 8px 8px 0;
         }
         .highlight-box p {
             margin: 0;
-            font-size: 16px;
+            font-size: 15px;
             color: #1a1a1a;
+            line-height: 1.6;
         }
+
+        /* ── BENEFITS ── */
         .benefits {
-            margin: 25px 0;
+            margin: 28px 0;
         }
         .benefit-item {
             display: flex;
             align-items: flex-start;
-            margin: 15px 0;
-            padding: 12px;
-            background: #FFFDE7;
-            border-radius: 8px;
-            transition: transform 0.2s;
-        }
-        .benefit-item:hover {
-            transform: translateX(5px);
+            margin: 0 0 12px 0;
+            padding: 14px 16px;
+            background: #FAFAFA;
+            border-radius: 10px;
+            border: 1px solid #F0F0F0;
         }
         .benefit-icon {
-            font-size: 24px;
-            margin-right: 12px;
-            min-width: 30px;
+            font-size: 22px;
+            margin-right: 14px;
+            min-width: 28px;
+            line-height: 1;
         }
         .benefit-text {
-            font-size: 15px;
+            font-size: 14px;
             line-height: 1.5;
             color: #333;
         }
-        .cta-button {
-            display: inline-block;
-            background: linear-gradient(135deg, #FFC107 0%, #FF9800 100%);
-            color: #000 !important;
-            padding: 18px 40px;
-            text-decoration: none !important;
-            border-radius: 50px;
-            margin: 25px 0;
-            font-weight: 800;
-            font-size: 16px;
-            box-shadow: 0 8px 20px rgba(255, 193, 7, 0.4);
-            transition: all 0.3s;
-            text-transform: uppercase;
+        .benefit-text strong {
+            color: #1a1a1a;
+        }
+
+        /* ── URGENCY BANNER ── */
+        .urgency {
+            background: #050505;
+            color: #FFC000;
+            padding: 14px 20px;
+            border-radius: 10px;
+            text-align: center;
+            margin: 28px 0;
+            font-weight: 700;
+            font-size: 13px;
             letter-spacing: 0.5px;
         }
-        .cta-button:hover {
-            box-shadow: 0 12px 28px rgba(255, 193, 7, 0.6);
-            transform: translateY(-2px);
-        }
-        .urgency {
-            background: #000;
-            color: #FFC107;
-            padding: 15px;
-            border-radius: 8px;
-            text-align: center;
-            margin: 25px 0;
-            font-weight: 700;
-            font-size: 14px;
-        }
+
+        /* ── FREE TRIAL SECTION ── */
         .free-trial-section {
-            background: linear-gradient(135deg, #0a0e1a 0%, #1a1a2e 50%, #0f1923 100%);
-            border-radius: 20px;
-            padding: 40px 30px;
-            margin: 30px 0;
+            background: linear-gradient(135deg, #050505 0%, #0D1117 50%, #050505 100%);
+            border-radius: 16px;
+            padding: 36px 24px;
+            margin: 28px 0;
             text-align: center;
-            border: 2px solid transparent;
-            background-clip: padding-box;
-            position: relative;
-            box-shadow: 0 20px 60px rgba(0, 255, 255, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+            border: 1px solid #222;
         }
-        .free-trial-section::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
+        .trial-badge {
+            display: inline-block;
+            background: rgba(255, 192, 0, 0.15);
+            border: 1px solid rgba(255, 192, 0, 0.4);
+            color: #FFC000;
+            padding: 6px 18px;
             border-radius: 20px;
-            padding: 2px;
-            background: linear-gradient(135deg, #00ffff, #FFC107, #ff00ff);
-            -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-            -webkit-mask-composite: xor;
-            mask-composite: exclude;
-            opacity: 0.6;
-        }
-        .sci-fi-badge {
-            display: inline-flex;
-            align-items: center;
-            background: linear-gradient(135deg, rgba(0, 255, 255, 0.2), rgba(255, 193, 7, 0.2));
-            border: 1px solid rgba(0, 255, 255, 0.4);
-            color: #00ffff;
-            padding: 8px 20px;
-            border-radius: 25px;
             font-size: 11px;
             font-weight: 800;
             letter-spacing: 2px;
             text-transform: uppercase;
-            margin-bottom: 15px;
-            backdrop-filter: blur(10px);
-            box-shadow: 0 4px 15px rgba(0, 255, 255, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+            margin-bottom: 16px;
         }
-        .free-trial-title {
+        .trial-emoji {
+            font-size: 48px;
+            margin: 10px 0 14px 0;
+        }
+        .trial-title {
             color: #ffffff;
-            font-size: 28px;
-            font-weight: 900;
-            margin: 0 0 12px 0;
+            font-size: 24px;
+            font-weight: 800;
+            margin: 0 0 10px 0;
             line-height: 1.3;
-            text-shadow: 0 0 20px rgba(0, 255, 255, 0.5);
         }
-        .free-trial-sub {
-            color: #b8c5d6;
-            font-size: 15px;
-            margin: 0 0 28px 0;
-            line-height: 1.6;
+        .trial-title-gold {
+            color: #FFC000;
         }
-        .code-card-wrapper {
-            position: relative;
-            margin: 25px auto;
-            max-width: 540px;
+        .trial-sub {
+            color: #999;
+            font-size: 14px;
+            margin: 0 0 24px 0;
+            line-height: 1.5;
         }
-        .code-card-glow {
-            position: absolute;
-            top: -2px;
-            left: -2px;
-            right: -2px;
-            bottom: -2px;
-            background: linear-gradient(135deg, #00ffff, #FFC107, #ff00ff, #00ffff);
-            border-radius: 14px;
-            opacity: 0.4;
-            filter: blur(8px);
-            z-index: -1;
+        .trial-sub code {
+            background: rgba(255, 192, 0, 0.15);
+            color: #FFC000;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            border: 1px solid rgba(255, 192, 0, 0.3);
         }
+
+        /* ── CODE CARD ── */
         .code-card {
-            background: linear-gradient(135deg, rgba(13, 17, 23, 0.95), rgba(22, 27, 34, 0.95));
-            border: 1px solid rgba(0, 255, 255, 0.3);
-            border-radius: 12px;
+            background: #0D1117;
+            border: 1px solid #30363D;
+            border-radius: 10px;
             overflow: hidden;
-            backdrop-filter: blur(10px);
-            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            margin: 20px auto;
+            max-width: 520px;
+            text-align: left;
         }
-        .card-header {
-            background: linear-gradient(135deg, rgba(0, 255, 255, 0.1), rgba(255, 193, 7, 0.1));
-            padding: 12px 16px;
+        .code-bar {
+            background: #161B22;
+            padding: 10px 14px;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            border-bottom: 1px solid rgba(0, 255, 255, 0.2);
+            border-bottom: 1px solid #30363D;
         }
-        .header-left {
+        .code-bar-left {
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 6px;
         }
-        .pulse-indicator {
-            width: 10px;
-            height: 10px;
+        .code-dot {
+            width: 8px;
+            height: 8px;
             border-radius: 50%;
-            background: #00ffff;
-            box-shadow: 0 0 10px #00ffff, 0 0 20px #00ffff;
-            animation: pulse 2s ease-in-out infinite;
+            display: inline-block;
         }
-        @keyframes pulse {
-            0%, 100% { opacity: 1; transform: scale(1); }
-            50% { opacity: 0.6; transform: scale(0.9); }
-        }
-        .status-text {
-            color: #00ffff;
+        .code-dot-green { background: #3FB950; }
+        .code-dot-yellow { background: #FFC000; }
+        .code-dot-red { background: #F85149; }
+        .code-bar-label {
+            color: #8B949E;
             font-size: 11px;
-            font-weight: 700;
-            letter-spacing: 1px;
-            text-transform: uppercase;
+            font-weight: 600;
+            margin-left: 8px;
         }
-        .copy-badge {
-            background: rgba(255, 193, 7, 0.2);
-            border: 1px solid rgba(255, 193, 7, 0.4);
-            color: #FFC107;
-            padding: 4px 10px;
-            border-radius: 6px;
+        .code-bar-copy {
+            color: #FFC000;
             font-size: 10px;
             font-weight: 700;
             letter-spacing: 0.5px;
+            background: rgba(255, 192, 0, 0.12);
+            padding: 3px 10px;
+            border-radius: 4px;
+            border: 1px solid rgba(255, 192, 0, 0.25);
         }
-        .code-display {
-            padding: 16px;
-            background: #0d1117;
-            display: flex;
-            gap: 12px;
-            align-items: flex-start;
-        }
-        .code-line-number {
-            color: #6e7681;
-            font-family: 'SF Mono', 'Fira Code', 'Courier New', monospace;
-            font-size: 12px;
-            min-width: 20px;
-            text-align: right;
-            user-select: none;
-            padding-top: 2px;
-        }
-        .code-content {
-            font-family: 'SF Mono', 'Fira Code', 'Courier New', monospace;
-            font-size: 11px;
-            color: #f8f8f2;
-            line-height: 1.6;
-            word-break: break-all;
-            flex: 1;
-            text-align: left;
-        }
-        .card-footer {
-            background: rgba(0, 0, 0, 0.3);
+        .code-body {
             padding: 14px 16px;
-            display: flex;
-            justify-content: center;
-            gap: 16px;
-            flex-wrap: wrap;
-            border-top: 1px solid rgba(0, 255, 255, 0.2);
+            font-family: 'SF Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: 10.5px;
+            color: #C9D1D9;
+            line-height: 1.7;
+            word-break: break-all;
+            overflow-x: auto;
         }
-        .instruction-step {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            color: #b8c5d6;
-            font-size: 11px;
-        }
-        .step-icon {
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            background: linear-gradient(135deg, #00ffff, #FFC107);
-            color: #000;
-            width: 18px;
-            height: 18px;
-            border-radius: 50%;
-            font-size: 10px;
-            font-weight: 800;
-        }
-        .step-text {
-            font-weight: 600;
-        }
-        .instant-results {
+        .code-comment { color: #8B949E; }
+        .code-tag { color: #FF7B72; }
+        .code-attr { color: #79C0FF; }
+        .code-val { color: #A5D6FF; }
+        .code-str { color: #FFC000; }
+        .code-steps {
+            background: #161B22;
+            padding: 12px 14px;
             display: flex;
             justify-content: center;
             gap: 20px;
-            margin: 25px 0;
+            flex-wrap: wrap;
+            border-top: 1px solid #30363D;
+        }
+        .code-step {
+            color: #8B949E;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .code-step-num {
+            color: #FFC000;
+            font-weight: 800;
+            margin-right: 4px;
+        }
+
+        /* ── RESULTS ROW ── */
+        .results-row {
+            display: flex;
+            justify-content: center;
+            gap: 28px;
+            margin: 24px 0;
             flex-wrap: wrap;
         }
         .result-item {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            gap: 6px;
+            text-align: center;
         }
         .result-icon {
-            font-size: 28px;
-            filter: drop-shadow(0 0 10px rgba(0, 255, 255, 0.6));
+            font-size: 26px;
+            margin-bottom: 4px;
         }
         .result-text {
-            color: #e0e0e0;
-            font-size: 12px;
+            color: #ccc;
+            font-size: 11px;
             font-weight: 600;
+        }
+        .trial-note {
+            color: #666;
+            font-size: 12px;
+            margin: 18px 0 0 0;
+            line-height: 1.5;
+            padding: 10px 14px;
+            background: rgba(255, 192, 0, 0.06);
+            border-radius: 6px;
+            border: 1px solid #222;
+        }
+
+        /* ── CTA SECTION ── */
+        .cta-section {
             text-align: center;
+            margin: 28px 0 8px 0;
         }
-        .sci-fi-note {
-            color: #8b949e;
-            font-size: 13px;
-            margin: 20px 0 0 0;
-            line-height: 1.6;
-            padding: 12px;
-            background: rgba(0, 255, 255, 0.05);
-            border-radius: 8px;
-            border: 1px solid rgba(0, 255, 255, 0.1);
-        }
-        .cta-invite {
-            background: linear-gradient(135deg, #FFFDE7 0%, #FFF9C4 100%);
-            border: 2px solid #FFE082;
-            border-radius: 12px;
-            padding: 24px 28px;
-            margin: 28px 0 20px 0;
-            text-align: center;
-        }
-        .cta-invite-text {
-            margin: 0 0 6px 0;
+        .cta-question {
             font-size: 18px;
             font-weight: 700;
             color: #1a1a1a;
+            margin: 0 0 6px 0;
         }
-        .cta-invite-sub {
-            margin: 0;
-            font-size: 16px;
-            color: #333;
+        .cta-sub {
+            font-size: 15px;
+            color: #666;
+            margin: 0 0 20px 0;
         }
+        .cta-button {
+            display: inline-block;
+            background: #FFC000;
+            color: #000 !important;
+            padding: 16px 44px;
+            text-decoration: none !important;
+            border-radius: 50px;
+            font-weight: 800;
+            font-size: 15px;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+        }
+
+        /* ── SIGNATURE ── */
         .signature {
-            margin-top: 35px;
-            padding-top: 25px;
-            border-top: 2px solid #FFE082;
+            margin-top: 32px;
+            padding-top: 24px;
+            border-top: 2px solid #F5F5F5;
         }
-        .signature p {
-            margin: 5px 0;
+        .sig-name {
+            font-weight: 700;
+            font-size: 15px;
+            color: #1a1a1a;
+            margin: 0 0 2px 0;
         }
-        .footer {
-            background: #0a0a0a;
-            color: #999;
-            text-align: center;
-            padding: 25px;
+        .sig-role {
+            color: #888;
+            font-size: 13px;
+            margin: 0 0 2px 0;
+        }
+        .sig-tagline {
+            color: #FFC000;
             font-size: 12px;
-            line-height: 1.6;
+            font-weight: 600;
+            margin: 4px 0 0 0;
+        }
+
+        /* ── FOOTER ── */
+        .footer {
+            background: #050505;
+            color: #666;
+            text-align: center;
+            padding: 24px 20px;
+            font-size: 11px;
+            line-height: 1.7;
         }
         .footer a {
-            color: #FFC107;
+            color: #FFC000;
             text-decoration: none;
         }
-        .ps {
-            margin-top: 25px;
-            padding: 15px;
-            background: #FFF3E0;
-            border-radius: 8px;
-            font-style: italic;
+        .footer-brand {
+            color: #FFC000;
+            font-weight: 700;
             font-size: 14px;
-            color: #E65100;
+            letter-spacing: -0.5px;
         }
     </style>
 </head>
 <body>
+    <div class="wrapper">
     <div class="container">
+        <!-- HEADER -->
         <div class="header">
-            <div class="emoji-bot">🤖</div>
-            <h1>Tu Competencia Ya Tiene un Empleado que Nunca Duerme</h1>
+            <p class="brand-name">BotLode</p>
+            <p class="brand-sub">Fabrica de Bots IA</p>
+            <p class="header-title">Tu competencia ya tiene un empleado<br>que nunca duerme</p>
         </div>
         
+        <!-- CONTENT -->
         <div class="content">
-            <p>Hola, {{company_name}}.</p>
+            <p class="greeting">Hola, <strong>{{company_name}}</strong>.</p>
             
-            <p>Estuve en tu web {{domain}} y vi que no tenés un asistente virtual como este.</p>
+            <p class="body-text">Estuve en tu web <strong>{{domain}}</strong> y noté que no tenés un asistente virtual con inteligencia artificial.</p>
             
-            <div class="hook">
-                ¿Cuántos clientes perdés mientras dormís? ¿Y los fines de semana?
-            </div>
+            <p class="hook">¿Cuántos clientes perdés mientras dormís?<br>¿Y los fines de semana?</p>
             
-            <p>Mientras leés esto, hay empresas como la tuya que ya tienen un <strong>bot con inteligencia artificial</strong> trabajando 24/7, 365 días al año.</p>
+            <p class="body-text">Mientras leés esto, hay empresas de tu rubro que ya tienen un <strong>bot con IA</strong> trabajando 24/7, 365 días al año, cerrando ventas sin descanso.</p>
             
             <div class="highlight-box">
-                <p><strong>🎯 Y lo mejor:</strong> Este bot no solo responde preguntas. Te avisa cuando un visitante muestra interés concreto y te notifica al instante para que cierres la venta cuando importa. Es como tener un vendedor que nunca descansa y sabe exactamente cuándo actuar.</p>
+                <p><strong>Lo mejor:</strong> Este bot no solo responde preguntas. Te avisa al instante cuando un visitante muestra interés real para que cierres la venta en el momento justo.</p>
             </div>
             
+            <!-- BENEFITS -->
             <div class="benefits">
                 <div class="benefit-item">
                     <div class="benefit-icon">💰</div>
-                    <div class="benefit-text"><strong>Se paga solo:</strong> Cada lead que captura vale más que su costo mensual.</div>
+                    <div class="benefit-text"><strong>Se paga solo.</strong> Cada lead que captura vale más que su costo mensual.</div>
                 </div>
-                
                 <div class="benefit-item">
                     <div class="benefit-icon">🎨</div>
-                    <div class="benefit-text"><strong>Tiene personalidad:</strong> Cambia de color según el modo (vendedor, técnico, enojado, feliz…).</div>
+                    <div class="benefit-text"><strong>Tiene personalidad.</strong> Cambia de color según el modo: vendedor, técnico, enojado, feliz.</div>
                 </div>
-                
                 <div class="benefit-item">
                     <div class="benefit-icon">⚡</div>
-                    <div class="benefit-text"><strong>Te sirve los clientes en bandeja:</strong> Cuando recopila un contacto, te manda toda la info por mail en tiempo real.</div>
+                    <div class="benefit-text"><strong>Te sirve clientes en bandeja.</strong> Captura contactos y te manda la info por mail en tiempo real.</div>
                 </div>
-                
                 <div class="benefit-item">
-                    <div class="benefit-icon">🚀</div>
-                    <div class="benefit-text"><strong>Tu web gana presencia:</strong> El bot sigue el mouse con la cabeza y capta la atención del visitante desde el primer segundo.</div>
+                    <div class="benefit-icon">👀</div>
+                    <div class="benefit-text"><strong>Capta la atención.</strong> Sigue el mouse con la cabeza y engancha al visitante desde el segundo 1.</div>
                 </div>
-                
                 <div class="benefit-item">
-                    <div class="benefit-icon">📋</div>
-                    <div class="benefit-text"><strong>Historial y monitoreo:</strong> Cuenta con historial de todos los chats y monitoreo en tiempo real.</div>
+                    <div class="benefit-icon">📊</div>
+                    <div class="benefit-text"><strong>Historial completo.</strong> Todos los chats guardados con monitoreo en tiempo real.</div>
                 </div>
             </div>
             
-            <div class="highlight-box" style="margin-top: 20px;">
-                <p style="font-size: 15px;">Un empleado que trabaja todo el día por vos, sin descanso, respondiendo mensajes y agendando reuniones.</p>
-            </div>
+            <div class="urgency">⏰ TUS COMPETIDORES YA LO ESTÁN USANDO</div>
             
-            <div class="urgency">
-                ⏰ TUS COMPETIDORES YA LO ESTÁN USANDO
-            </div>
-            
-            <!-- SECCION PRUEBA GRATIS - EFECTO WOW SCI-FI -->
+            <!-- FREE TRIAL SECTION -->
             <div class="free-trial-section">
-                <div class="sci-fi-badge">
-                    <span style="font-size: 20px; margin-right: 6px;">⚡</span>
-                    <span>PRUEBA INSTANTÁNEA</span>
-                    <span style="font-size: 20px; margin-left: 6px;">⚡</span>
-                </div>
+                <div class="trial-badge">⚡ PRUEBA GRATIS ⚡</div>
                 
-                <div style="font-size: 56px; margin: 12px 0; filter: drop-shadow(0 0 20px rgba(0, 255, 255, 0.6));">🤖</div>
+                <div class="trial-emoji">🤖</div>
                 
-                <h2 class="free-trial-title">Integrá tu bot en <span style="background: linear-gradient(135deg, #00ffff, #FFC107); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;">30 segundos</span></h2>
+                <h2 class="trial-title">Integralo en tu web en <span class="trial-title-gold">30 segundos</span></h2>
                 
-                <p class="free-trial-sub">Copiá este código y pegalo antes del <code style="background: rgba(0,255,255,0.15); color: #00ffff; padding: 3px 8px; border-radius: 6px; font-size: 13px; border: 1px solid rgba(0,255,255,0.3);">&lt;/body&gt;</code> de tu web</p>
+                <p class="trial-sub">Copiá este código y pegalo antes del <code>&lt;/body&gt;</code> de tu sitio</p>
                 
-                <!-- CARD INTERACTIVA - iframe completo igual que botlode_web/index.html (con src y opacity:1 para pegar en cualquier sitio) -->
-                <div class="code-card-wrapper">
-                    <div class="code-card-glow"></div>
-                    <div class="code-card">
-                        <div class="card-header">
-                            <div class="header-left">
-                                <div class="pulse-indicator"></div>
-                                <span class="status-text">LISTO PARA COPIAR</span>
-                            </div>
-                            <div class="copy-badge">📋 CTRL+C</div>
+                <!-- CODE CARD - iframe + script idéntico a botlode_web/index.html -->
+                <div class="code-card">
+                    <div class="code-bar">
+                        <div class="code-bar-left">
+                            <span class="code-dot code-dot-red"></span>
+                            <span class="code-dot code-dot-yellow"></span>
+                            <span class="code-dot code-dot-green"></span>
+                            <span class="code-bar-label">botlode-player.html</span>
                         </div>
-                        
-                        <div class="code-display">
-                            <div class="code-line-number">1</div>
-                            <div class="code-content">
-                                <span style="color: #ff79c6;">&lt;iframe</span>
-                                <span style="color: #8be9fd;"> id</span><span style="color: #f8f8f2;">=</span><span style="color: #f1fa8c;">"botlode-player"</span>
-                                <span style="color: #8be9fd;"> src</span><span style="color: #f8f8f2;">=</span><span style="color: #f1fa8c;">"https://botlode-player.vercel.app?botId=0038971a-da75-4ddc-8663-d52a6b8f2936&amp;v=2.5"</span>
-                                <span style="color: #8be9fd;"> style</span><span style="color: #f8f8f2;">=</span><span style="color: #f1fa8c;">"position:fixed;bottom:16px;right:16px;width:140px;height:140px;border:none;z-index:9998;pointer-events:none;background:transparent !important;background-color:transparent !important;-webkit-background-color:transparent !important;opacity:1;overflow:hidden;will-change:width,height;transform:translateZ(0);backface-visibility:hidden;-webkit-backface-visibility:hidden"</span>
-                                <span style="color: #8be9fd;"> allow</span><span style="color: #f8f8f2;">=</span><span style="color: #f1fa8c;">"clipboard-write"</span>
-                                <span style="color: #8be9fd;"> loading</span><span style="color: #f8f8f2;">=</span><span style="color: #f1fa8c;">"lazy"</span>
-                                <span style="color: #8be9fd;"> allowtransparency</span><span style="color: #f8f8f2;">=</span><span style="color: #f1fa8c;">"true"</span><span style="color: #ff79c6;">&gt;&lt;/iframe&gt;</span>
-                            </div>
-                        </div>
-                        
-                        <div class="card-footer">
-                            <div class="instruction-step">
-                                <span class="step-icon">①</span>
-                                <span class="step-text">Seleccioná todo el código</span>
-                            </div>
-                            <div class="instruction-step">
-                                <span class="step-icon">②</span>
-                                <span class="step-text">Copiá (Ctrl+C o Cmd+C)</span>
-                            </div>
-                            <div class="instruction-step">
-                                <span class="step-icon">③</span>
-                                <span class="step-text">Pegá en tu HTML</span>
-                            </div>
-                        </div>
+                        <span class="code-bar-copy">COPIAR</span>
+                    </div>
+                    
+                    <div class="code-body">
+                        <span class="code-comment">&lt;!-- BotLode Player --&gt;</span><br>
+                        <span class="code-tag">&lt;iframe</span>
+                        <span class="code-attr"> id</span>=<span class="code-val">"botlode-player"</span><br>
+                        &nbsp;&nbsp;<span class="code-attr">src</span>=<span class="code-str">"https://botlode-player.vercel.app?botId=0038971a-da75-4ddc-8663-d52a6b8f2936"</span><br>
+                        &nbsp;&nbsp;<span class="code-attr">style</span>=<span class="code-val">"position:fixed;bottom:16px;right:16px;width:140px;height:140px;border:none;z-index:9999;pointer-events:auto;background:transparent;"</span><br>
+                        &nbsp;&nbsp;<span class="code-attr">allow</span>=<span class="code-val">"clipboard-write"</span>
+                        <span class="code-attr"> loading</span>=<span class="code-val">"lazy"</span><span class="code-tag">&gt;&lt;/iframe&gt;</span><br>
+                        <br>
+                        <span class="code-comment">&lt;!-- Auto-resize del chat --&gt;</span><br>
+                        <span class="code-tag">&lt;script&gt;</span><br>
+                        <span class="code-val">!function(){var e=document.getElementById</span><br>
+                        <span class="code-val">("botlode-player");e&amp;&amp;window.addEventListener</span><br>
+                        <span class="code-val">("message",function(t){"CMD_OPEN"===t.data?</span><br>
+                        <span class="code-val">(e.style.width="450px",e.style.height=</span><br>
+                        <span class="code-val">"calc(100vh - 32px)"):"CMD_CLOSE"===t.data?</span><br>
+                        <span class="code-val">(e.style.width="140px",e.style.height="140px"</span><br>
+                        <span class="code-val">):"CMD_HOVER_START"===t.data?(e.style.width=</span><br>
+                        <span class="code-val">"350px",e.style.height="140px"):"CMD_HOVER_END"</span><br>
+                        <span class="code-val">===t.data&amp;&amp;(e.style.width="140px",</span><br>
+                        <span class="code-val">e.style.height="140px")})}();</span><br>
+                        <span class="code-tag">&lt;/script&gt;</span>
+                    </div>
+                    
+                    <div class="code-steps">
+                        <span class="code-step"><span class="code-step-num">1.</span> Seleccioná todo</span>
+                        <span class="code-step"><span class="code-step-num">2.</span> Copiá (Ctrl+C)</span>
+                        <span class="code-step"><span class="code-step-num">3.</span> Pegá en tu HTML</span>
                     </div>
                 </div>
                 
-                <div class="instant-results">
+                <div class="results-row">
                     <div class="result-item">
                         <div class="result-icon">⚡</div>
-                        <div class="result-text">Se activa al instante</div>
+                        <div class="result-text">Activo al instante</div>
                     </div>
                     <div class="result-item">
                         <div class="result-icon">🎨</div>
-                        <div class="result-text">Diseño profesional incluido</div>
+                        <div class="result-text">Diseño pro incluido</div>
                     </div>
                     <div class="result-item">
                         <div class="result-icon">🔒</div>
-                        <div class="result-text">Sin registro ni tarjeta</div>
+                        <div class="result-text">Sin registro</div>
                     </div>
                 </div>
                 
-                <p class="sci-fi-note">
-                    <span style="color: #00ffff; font-weight: 700;">→</span>
-                    El bot se integra automáticamente y comienza a interactuar con tus visitantes.
-                    <span style="color: #00ffff; font-weight: 700;">←</span>
-                </p>
+                <p class="trial-note">El bot se integra automáticamente y comienza a interactuar con tus visitantes.</p>
             </div>
             
-            <div class="cta-invite">
-                <p class="cta-invite-text">¿Querés verlo en acción primero?</p>
-                <p class="cta-invite-sub">Mirá cómo funciona en mi página.</p>
+            <!-- CTA -->
+            <div class="cta-section">
+                <p class="cta-question">¿Querés verlo en acción primero?</p>
+                <p class="cta-sub">Mirá cómo funciona en mi página.</p>
+                <a href="{{calendar_link}}" class="cta-button" style="color: #000 !important; text-decoration: none;">VER DEMO EN VIVO</a>
             </div>
             
-            <center>
-                <a href="{{calendar_link}}" class="cta-button" style="color: #000 !important; text-decoration: none;">BotLode</a>
-            </center>
-            
+            <!-- SIGNATURE -->
             <div class="signature">
-                <p><strong>{{sender_name}}</strong></p>
-                <p style="color: #666; font-size: 14px;">Founder @ BotLode</p>
-                <p style="color: #999; font-size: 13px;">El bot que vende mientras dormís</p>
+                <p class="sig-name">{{sender_name}}</p>
+                <p class="sig-role">Founder @ BotLode</p>
+                <p class="sig-tagline">El bot que vende mientras dormís 🤖</p>
             </div>
         </div>
         
+        <!-- FOOTER -->
         <div class="footer">
-            <p>Este email fue enviado a <strong>{{email}}</strong> desde <strong>{{domain}}</strong></p>
-            <p>Si no deseas recibir más correos, respondé a este email con la palabra REMOVER.</p>
-            <p style="margin-top: 15px; color: #666;">🤖 Powered by BotLode - <a href="https://www.botlode.com">www.botlode.com</a></p>
+            <p class="footer-brand">BotLode</p>
+            <p style="margin: 8px 0;">Email enviado a <strong>{{email}}</strong> desde <strong>{{domain}}</strong></p>
+            <p>Si no querés recibir más correos, respondé con la palabra <strong>REMOVER</strong>.</p>
+            <p style="margin-top: 12px;"><a href="https://www.botlode.com">www.botlode.com</a></p>
         </div>
+    </div>
     </div>
 </body>
 </html>
