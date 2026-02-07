@@ -953,10 +953,11 @@ async def main():
     """Entry point."""
     # Log muy visible al inicio
     print("\n" + "="*70)
-    print("🔍 DOMAIN HUNTER WORKER - STARTING UP")
+    print("DOMAIN HUNTER WORKER - STARTING UP")
     print("="*70)
-    print(f"⏰ Timestamp: {datetime.utcnow().isoformat()}")
-    print(f"🌍 Environment: Railway" if os.getenv("RAILWAY_ENVIRONMENT") else "🏠 Environment: Local")
+    print(f"Timestamp: {datetime.utcnow().isoformat()}")
+    env = "Railway" if os.getenv("RAILWAY_ENVIRONMENT") else "Local"
+    print(f"Environment: {env}")
     print("="*70 + "\n")
     
     worker = DomainHunterWorker()
@@ -964,5 +965,5 @@ async def main():
 
 
 if __name__ == "__main__":
-    print("\n🚀🚀🚀 DOMAIN HUNTER WORKER - ENTRY POINT REACHED 🚀🚀🚀\n")
+    print("\n*** DOMAIN HUNTER WORKER - ENTRY POINT REACHED ***\n")
     asyncio.run(main())

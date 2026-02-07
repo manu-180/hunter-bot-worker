@@ -43,4 +43,5 @@ RUN playwright install chromium
 COPY . .
 
 # Comando para ejecutar ambos workers en paralelo
-CMD ["python", "start_workers.py"]
+# Usar launcher simple con multiprocessing (más robusto que subprocess)
+CMD ["python", "-u", "launcher_simple.py"]

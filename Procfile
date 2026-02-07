@@ -1,1 +1,1 @@
-worker: python start_workers.py
+worker: python -u launcher_simple.py
