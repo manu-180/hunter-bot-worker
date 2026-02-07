@@ -419,25 +419,42 @@
                     
                     <div class="code-body">
                         <span class="code-comment">&lt;!-- BotLode Player --&gt;</span><br>
-                        <span class="code-tag">&lt;iframe</span>
-                        <span class="code-attr"> id</span>=<span class="code-val">"botlode-player"</span><br>
-                        &nbsp;&nbsp;<span class="code-attr">src</span>=<span class="code-str">"https://botlode-player.vercel.app?botId=0038971a-da75-4ddc-8663-d52a6b8f2936"</span><br>
-                        &nbsp;&nbsp;<span class="code-attr">style</span>=<span class="code-val">"position:fixed;bottom:16px;right:16px;width:140px;height:140px;border:none;z-index:9999;pointer-events:auto;background:transparent;"</span><br>
-                        &nbsp;&nbsp;<span class="code-attr">allow</span>=<span class="code-val">"clipboard-write"</span>
-                        <span class="code-attr"> loading</span>=<span class="code-val">"lazy"</span><span class="code-tag">&gt;&lt;/iframe&gt;</span><br>
+                        <span class="code-tag">&lt;iframe</span><br>
+                        &nbsp;&nbsp;<span class="code-attr">id</span>=<span class="code-val">"botlode-player"</span><br>
+                        &nbsp;&nbsp;<span class="code-attr">src</span>=<span class="code-str">"https://botlode-player.vercel.app?botId=0038971a-da75-4ddc-8663-d52a6b8f2936&amp;v=2.5"</span><br>
+                        &nbsp;&nbsp;<span class="code-attr">style</span>=<span class="code-val">"position:fixed;bottom:16px;right:16px;width:140px;height:140px;border:none;z-index:9998;pointer-events:none;background:transparent !important;background-color:transparent !important;-webkit-background-color:transparent !important;opacity:0;overflow:hidden;will-change:width,height;transform:translateZ(0);backface-visibility:hidden;-webkit-backface-visibility:hidden;"</span><br>
+                        &nbsp;&nbsp;<span class="code-attr">allow</span>=<span class="code-val">"clipboard-write"</span><br>
+                        &nbsp;&nbsp;<span class="code-attr">loading</span>=<span class="code-val">"lazy"</span><br>
+                        &nbsp;&nbsp;<span class="code-attr">allowtransparency</span>=<span class="code-val">"true"</span><span class="code-tag">&gt;&lt;/iframe&gt;</span><br>
                         <br>
-                        <span class="code-comment">&lt;!-- Auto-resize del chat --&gt;</span><br>
+                        <span class="code-comment">&lt;!-- Activación + resize --&gt;</span><br>
                         <span class="code-tag">&lt;script&gt;</span><br>
                         <span class="code-val">!function(){var e=document.getElementById</span><br>
-                        <span class="code-val">("botlode-player");e&amp;&amp;window.addEventListener</span><br>
-                        <span class="code-val">("message",function(t){"CMD_OPEN"===t.data?</span><br>
-                        <span class="code-val">(e.style.width="450px",e.style.height=</span><br>
-                        <span class="code-val">"calc(100vh - 32px)"):"CMD_CLOSE"===t.data?</span><br>
-                        <span class="code-val">(e.style.width="140px",e.style.height="140px"</span><br>
-                        <span class="code-val">):"CMD_HOVER_START"===t.data?(e.style.width=</span><br>
-                        <span class="code-val">"350px",e.style.height="140px"):"CMD_HOVER_END"</span><br>
-                        <span class="code-val">===t.data&amp;&amp;(e.style.width="140px",</span><br>
-                        <span class="code-val">e.style.height="140px")})}();</span><br>
+                        <span class="code-val">("botlode-player"),x=!1;if(!e)return;</span><br>
+                        <span class="code-val">window.addEventListener("message",function(t){</span><br>
+                        <span class="code-val">"CMD_READY"===t.data?(e.style.pointerEvents=</span><br>
+                        <span class="code-val">"auto",e.style.opacity="1"):"CMD_OPEN"===</span><br>
+                        <span class="code-val">t.data&amp;&amp;!x?(e.style.transition="none",</span><br>
+                        <span class="code-val">e.style.opacity="0",window.innerWidth&lt;600?</span><br>
+                        <span class="code-val">(e.style.left="0",e.style.top="0",e.style.right</span><br>
+                        <span class="code-val">="0",e.style.bottom="0",e.style.width="100%",</span><br>
+                        <span class="code-val">e.style.height="100%"):(e.style.width="450px",</span><br>
+                        <span class="code-val">e.style.height="calc(100vh - 32px)"),</span><br>
+                        <span class="code-val">e.offsetHeight,requestAnimationFrame(function(){</span><br>
+                        <span class="code-val">requestAnimationFrame(function(){e.style.</span><br>
+                        <span class="code-val">transition="opacity .1s ease-out",e.style.</span><br>
+                        <span class="code-val">opacity="1"})}),x=!0):"CMD_CLOSE"===t.data</span><br>
+                        <span class="code-val">&amp;&amp;x&amp;&amp;(e.style.transition="opacity .12s</span><br>
+                        <span class="code-val">ease-out",e.style.opacity="0",setTimeout(</span><br>
+                        <span class="code-val">function(){e.style.transition="none",e.style</span><br>
+                        <span class="code-val">.left="auto",e.style.top="auto",e.style.right=</span><br>
+                        <span class="code-val">"16px",e.style.bottom="16px",e.style.width=</span><br>
+                        <span class="code-val">"140px",e.style.height="140px",e.offsetHeight,</span><br>
+                        <span class="code-val">e.style.transition="opacity .3s ease-out",</span><br>
+                        <span class="code-val">e.style.opacity="1"},500),x=!1)});</span><br>
+                        <span class="code-val">setTimeout(function(){e.style.opacity==="0"</span><br>
+                        <span class="code-val">&amp;&amp;(e.style.pointerEvents="auto",e.style</span><br>
+                        <span class="code-val">.opacity="1")},8e3)}();</span><br>
                         <span class="code-tag">&lt;/script&gt;</span>
                     </div>
                     
