@@ -88,14 +88,19 @@ class WorkerManager:
         signal.signal(signal.SIGTERM, self.signal_handler)
         
         self.log("=" * 70)
-        self.log("🤖 HUNTERBOT - WORKER MANAGER")
+        self.log("🤖 HUNTERBOT - WORKER MANAGER v3 | HORARIO EXTENDIDO")
         self.log("=" * 70)
         self.log("")
-        self.log("Iniciando workers en paralelo...")
+        self.log("🚀 Iniciando workers en paralelo...")
+        self.log("   1. DOMAIN-HUNTER: Busca dominios en Google (SerpAPI)")
+        self.log("   2. LEADSNIPER: Scrapea emails y envía")
         self.log("")
         
         # Iniciar ambos workers
+        self.log("🔵 Iniciando DOMAIN-HUNTER...")
         domain_hunter = self.start_worker("domain_hunter_worker.py", "DOMAIN-HUNTER")
+        
+        self.log("🟢 Iniciando LEADSNIPER...")
         leadsniper = self.start_worker("main.py", "LEADSNIPER")
         
         # Crear tareas para monitorear ambos
@@ -112,7 +117,10 @@ class WorkerManager:
         
         self.log("")
         self.log("✅ Ambos workers iniciados correctamente")
+        self.log("✅ PID DOMAIN-HUNTER: " + str(domain_hunter.pid))
+        self.log("✅ PID LEADSNIPER: " + str(leadsniper.pid))
         self.log("📊 Monitoreando salida en tiempo real...")
+        self.log("=" * 70)
         self.log("")
         
         # Esperar a que ambos terminen

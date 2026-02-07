@@ -1,0 +1,203 @@
+=============================================================================
+🔧 PROBLEMA: El bot no está recopilando dominios
+=============================================================================
+
+RESUMEN DEL PROBLEMA:
+El domain_hunter_worker.py NO va a funcionar hasta que habilites el bot 
+para tu usuario en Supabase.
+
+¿POR QUÉ NO FUNCIONA?
+El worker busca usuarios con bot_enabled = true en la tabla hunter_configs.
+Si no hay ningún usuario con el bot habilitado, el worker se queda 
+esperando sin hacer nada.
+
+=============================================================================
+✅ SOLUCIÓN RÁPIDA (3 PASOS)
+=============================================================================
+
+PASO 1: Ejecutar el diagnóstico
+--------------------------------
+1. Abre Supabase → SQL Editor
+2. Carga y ejecuta el archivo: SOLUCION_RAPIDA_BOT.sql
+3. En los resultados, busca tu user_id en la sección "USUARIOS REGISTRADOS"
+
+PASO 2: Habilitar el bot
+-------------------------
+Copia tu user_id del paso anterior y ejecuta esto en Supabase:
+
+-- Si ya tienes un registro en hunter_configs:
+UPDATE hunter_configs 
+SET 
+    bot_enabled = true,
+    nicho = 'inmobiliarias',
+    ciudades = ARRAY['Buenos Aires', 'Córdoba', 'Rosario', 'Mendoza'],
+    pais = 'Argentina'
+WHERE user_id = 'TU_USER_ID_AQUI';  -- ⚠️ REEMPLAZAR con tu user_id
+
+-- Si NO tienes registro (usuario nuevo):
+INSERT INTO hunter_configs (
+    user_id, bot_enabled, nicho, ciudades, pais,
+    from_name, email_subject, is_active
+) VALUES (
+    'TU_USER_ID_AQUI',  -- ⚠️ REEMPLAZAR
+    true, 'inmobiliarias',
+    ARRAY['Buenos Aires', 'Córdoba', 'Rosario', 'Mendoza'],
+    'Argentina', 'Mi Empresa', 'Potenciemos tu negocio juntos', true
+);
+
+PASO 3: Verificar que funcionó
+-------------------------------
+SELECT user_id, bot_enabled, nicho, ciudades, pais
+FROM hunter_configs
+WHERE bot_enabled = true;
+
+Si ves tu usuario aquí con bot_enabled = true, ¡ya está! 🎉
+
+=============================================================================
+🚀 INICIAR EL BOT
+=============================================================================
+
+En Railway (producción):
+El bot ya está corriendo con start_workers.py. Solo verifica los logs.
+
+Local (desarrollo):
+  python start_workers.py         # Ambos bots
+  python domain_hunter_worker.py  # Solo domain hunter
+
+=============================================================================
+📊 VERIFICAR QUE ESTÁ FUNCIONANDO
+=============================================================================
+
+-- Ver logs en tiempo real:
+SELECT created_at, level, action, domain, message
+FROM hunter_logs
+WHERE user_id = 'TU_USER_ID_AQUI'
+ORDER BY created_at DESC
+LIMIT 50;
+
+-- Ver cuántos dominios se están agregando:
+SELECT status, COUNT(*) as cantidad
+FROM leads
+WHERE user_id = 'TU_USER_ID_AQUI'
+GROUP BY status;
+
+-- Ver los últimos dominios agregados:
+SELECT domain, status, created_at
+FROM leads
+WHERE user_id = 'TU_USER_ID_AQUI'
+ORDER BY created_at DESC
+LIMIT 20;
+
+=============================================================================
+🎯 CÓMO FUNCIONA EL SISTEMA
+=============================================================================
+
+1. DOMAIN HUNTER WORKER (domain_hunter_worker.py)
+   - Busca dominios en Google usando SerpAPI
+   - Solo funciona si hay usuarios con bot_enabled = true
+   - Usa rotación automática de 120+ nichos y 2000+ ciudades
+   - Guarda dominios en tabla leads con status = 'pending'
+   - Respeta horario laboral (8 AM - 7 PM) para ahorrar créditos
+
+2. LEADSNIPER WORKER (main.py)
+   - Toma dominios con status = 'pending'
+   - Hace scraping para encontrar emails
+   - Envía emails usando Resend
+   - También respeta horario laboral
+
+3. FLUJO COMPLETO:
+   pending → scraping → scraped → queued_for_send → sending → sent
+                     ↘ failed (si hay error)
+
+=============================================================================
+⚙️ CAMBIAR LA CONFIGURACIÓN
+=============================================================================
+
+Puedes cambiar qué busca el bot en cualquier momento:
+
+UPDATE hunter_configs 
+SET 
+    nicho = 'agencias de marketing',
+    ciudades = ARRAY['Madrid', 'Barcelona', 'Valencia'],
+    pais = 'España'
+WHERE user_id = 'TU_USER_ID_AQUI';
+
+Nichos disponibles: inmobiliarias, agencias de marketing, estudios contables,
+despachos de abogados, clínicas dentales, gimnasios, restaurantes, hoteles,
+y 110+ más.
+
+=============================================================================
+🛠️ SOLUCIÓN DE PROBLEMAS
+=============================================================================
+
+PROBLEMA: El bot no encuentra dominios
+SOLUCIÓN: Resetear el tracking
+
+  DELETE FROM domain_search_tracking 
+  WHERE user_id = 'TU_USER_ID_AQUI';
+
+PROBLEMA: Ver qué está buscando ahora
+
+  SELECT nicho, ciudad, pais, current_page, last_searched_at
+  FROM domain_search_tracking
+  WHERE user_id = 'TU_USER_ID_AQUI'
+  ORDER BY last_searched_at DESC
+  LIMIT 10;
+
+PROBLEMA: Quiero que busque más rápido
+SOLUCIÓN: Editar domain_hunter_worker.py líneas 38-39:
+
+  MIN_DELAY_BETWEEN_SEARCHES = 3  # Reducir a 1 (gasta más créditos)
+  MAX_DELAY_BETWEEN_SEARCHES = 10  # Reducir a 5
+
+=============================================================================
+🔑 VARIABLES DE ENTORNO NECESARIAS (.env)
+=============================================================================
+
+SUPABASE_URL=tu_supabase_url
+SUPABASE_KEY=tu_supabase_service_role_key
+SERPAPI_KEY=tu_serpapi_key                    # OBLIGATORIO
+RESEND_API_KEY=tu_resend_api_key             # Opcional al principio
+
+=============================================================================
+❓ PREGUNTAS FRECUENTES
+=============================================================================
+
+P: ¿Cuánto tarda en empezar a agregar dominios?
+R: Entre 1-5 minutos después de habilitar el bot.
+
+P: ¿Cuántos dominios agrega por hora?
+R: Típicamente entre 50-200 dominios/hora dependiendo del nicho.
+
+P: ¿Gasta muchos créditos de SerpAPI?
+R: No, solo busca de 8 AM a 7 PM con delays de 3-10 segundos.
+
+P: ¿Puedo tener varios usuarios con el bot activo?
+R: Sí, cada usuario puede tener su propio bot independiente.
+
+P: ¿El bot se detiene cuando no hay más dominios?
+R: No, rota entre 120+ nichos y 2000+ ciudades automáticamente.
+
+=============================================================================
+📝 ARCHIVOS ÚTILES
+=============================================================================
+
+SOLUCION_RAPIDA_BOT.sql   - Script para diagnosticar y solucionar
+diagnostico_bot.sql       - Diagnóstico detallado completo
+soluciones_bot.sql        - Soluciones para problemas comunes
+domain_hunter_worker.py   - Bot que busca dominios
+main.py                   - Bot que procesa dominios
+start_workers.py          - Inicia ambos bots en paralelo
+
+=============================================================================
+🎉 CONCLUSIÓN
+=============================================================================
+
+Una vez que ejecutes el SQL y habilites bot_enabled = true, el bot debería
+empezar a funcionar automáticamente.
+
+Verifica en los logs y en la tabla leads que está agregando dominios.
+
+¡Cualquier duda, revisa SOLUCION_RAPIDA_BOT.sql! 🚀
+
+=============================================================================

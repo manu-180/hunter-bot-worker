@@ -45,7 +45,7 @@ CHECK_USERS_INTERVAL = 60  # 1 minuto
 # HORARIO INTELIGENTE - Pausar búsquedas de noche para no gastar SerpAPI
 # =============================================================================
 BUSINESS_HOURS_START = 8   # 8 AM (hora Argentina)
-BUSINESS_HOURS_END = 19    # 7 PM (hora Argentina)
+BUSINESS_HOURS_END = 20    # 8 PM (hora Argentina) - EXTENDIDO
 PAUSE_CHECK_INTERVAL = 300  # Revisar cada 5 minutos cuando está pausado
 
 # Batch size: cuántos dominios intentar agregar por búsqueda (solo los nuevos se insertan)
@@ -292,9 +292,9 @@ class DomainHunterWorker:
         
     async def start(self):
         """Inicia el worker daemon."""
-        log.info("\n" + "="*60)
+        log.info("\n" + "="*70)
         log.info("🔍 DOMAIN HUNTER WORKER - Iniciando")
-        log.info("="*60 + "\n")
+        log.info("="*70 + "\n")
         
         if not self.serpapi_key:
             log.error("❌ SERPAPI_KEY no configurada en .env")
@@ -302,22 +302,25 @@ class DomainHunterWorker:
             return
         
         log.info("✅ SerpAPI configurada")
+        log.info(f"✅ Supabase URL: {SUPABASE_URL[:30]}...")
         
         # 🔖 FINGERPRINT DE VERSION - para confirmar qué código corre Railway
         utc_now = datetime.utcnow()
         utc_hour = utc_now.hour
         argentina_hour = (utc_hour - 3) % 24
         argentina_min = utc_now.minute
-        log.info(f"🔖 VERSION: horario_guard_v2 | DOBLE VERIFICACION DE HORARIO ACTIVA")
+        log.info(f"\n🔖 VERSION: horario_extended_v3 | HORARIO EXTENDIDO HASTA 20:00")
         log.info(f"🕐 HORA ACTUAL: Argentina={argentina_hour:02d}:{argentina_min:02d} | UTC={utc_hour:02d}:{argentina_min:02d}")
         log.info(f"🕐 HORARIO LABORAL: {BUSINESS_HOURS_START}:00 - {BUSINESS_HOURS_END}:00 (hora Argentina)")
         log.info(f"🛡️ GUARDIA DOBLE: check en _main_loop() + check en _search_domains_for_user()")
         _currently_business = is_business_hours()
-        log.info(f"📊 ESTADO ACTUAL: {'DENTRO de horario laboral - buscando dominios' if _currently_business else 'FUERA de horario - SerpAPI PAUSADO, 0 creditos se gastaran'}")
+        log.info(f"📊 ESTADO ACTUAL: {'✅ DENTRO de horario laboral - buscando dominios' if _currently_business else '⏸️  FUERA de horario - SerpAPI PAUSADO, 0 creditos se gastaran'}")
         
-        log.info(f"⏱️  Check de usuarios cada {CHECK_USERS_INTERVAL}s")
+        log.info(f"\n⏱️  Check de usuarios cada {CHECK_USERS_INTERVAL}s")
         log.info(f"⏱️  Delay entre búsquedas: {MIN_DELAY_BETWEEN_SEARCHES}-{MAX_DELAY_BETWEEN_SEARCHES}s")
-        log.info(f"📦 Batch size: {DOMAIN_BATCH_SIZE} dominios\n")
+        log.info(f"📦 Batch size: {DOMAIN_BATCH_SIZE} dominios")
+        log.info(f"🌍 Total países: {TOTAL_PAISES} | Total ciudades: {TOTAL_CIUDADES}")
+        log.info(f"🎯 Total nichos disponibles: {len(NICHOS)}\n")
         
         try:
             await self._main_loop()
@@ -328,38 +331,65 @@ class DomainHunterWorker:
     
     async def _main_loop(self):
         """Loop principal del worker."""
+        log.info("🚀 Entrando en loop principal del Domain Hunter Worker...\n")
+        
         while True:
             try:
                 # 1. Obtener usuarios con bot habilitado
+                log.info("=" * 70)
+                log.info("🔄 Nueva iteración del loop principal")
+                log.info("=" * 70)
+                
                 await self._update_active_users()
                 
                 if not self.active_users:
-                    log.info("😴 No hay usuarios con bot habilitado. Esperando...")
+                    log.warning("😴 No hay usuarios con bot habilitado. Esperando...")
+                    log.info(f"⏳ Esperando {CHECK_USERS_INTERVAL}s antes de revisar de nuevo...\n")
                     await asyncio.sleep(CHECK_USERS_INTERVAL)
                     continue
                 
-                # 🕐 VERIFICAR HORARIO LABORAL (8 AM - 7 PM, hora Argentina)
+                # 🕐 VERIFICAR HORARIO LABORAL (8 AM - 8 PM, hora Argentina)
+                utc_now = datetime.utcnow()
+                argentina_hour = (utc_now.hour - 3) % 24
+                argentina_min = utc_now.minute
+                
+                log.info(f"🕐 Hora actual: Argentina {argentina_hour:02d}:{argentina_min:02d} | UTC {utc_now.hour:02d}:{argentina_min:02d}")
+                
                 if not is_business_hours():
-                    utc_now = datetime.utcnow()
-                    argentina_hour = (utc_now.hour - 3) % 24
                     log.warning(
-                        f"⏸️  FUERA DE HORARIO LABORAL (hora Argentina: {argentina_hour:02d}:00). "
+                        f"⏸️  FUERA DE HORARIO LABORAL (hora Argentina: {argentina_hour:02d}:{argentina_min:02d}). "
                         f"Pausando búsquedas de dominios hasta las {BUSINESS_HOURS_START}:00 AM..."
                     )
-                    log.info(f"💰 Ahorrando créditos de SerpAPI. Revisando en {PAUSE_CHECK_INTERVAL}s...")
+                    log.info(f"💰 Ahorrando créditos de SerpAPI. Revisando en {PAUSE_CHECK_INTERVAL}s...\n")
                     await asyncio.sleep(PAUSE_CHECK_INTERVAL)
                     continue
                 
+                log.info(f"✅ Dentro de horario laboral ({BUSINESS_HOURS_START}:00 - {BUSINESS_HOURS_END}:00). Buscando dominios...")
+                
                 # 2. Procesar cada usuario activo
+                log.info(f"📋 Procesando {len(self.active_users)} usuario(s)...\n")
+                
                 for user_id, config in self.active_users.items():
-                    log.info(f"\n🎯 Usuario: {user_id[:8]}... | Rotación automática activada")
+                    log.info(f"\n{'='*70}")
+                    log.info(f"🎯 Procesando usuario: {user_id[:8]}...")
+                    log.info(f"   Nicho: {config.get('nicho', 'N/A')}")
+                    log.info(f"   País: {config.get('pais', 'N/A')}")
+                    log.info(f"   Rotación automática: ACTIVADA")
+                    log.info(f"{'='*70}\n")
                     
                     # Buscar dominios para este usuario
+                    log.info("🔍 Iniciando búsqueda de dominios...")
                     domains = await self._search_domains_for_user(user_id, config)
                     
                     if domains:
-                        log.info(f"✅ Encontrados {len(domains)} dominios válidos")
+                        log.info(f"\n✅ Encontrados {len(domains)} dominios válidos:")
+                        for i, domain in enumerate(domains[:5], 1):
+                            log.info(f"   {i}. {domain}")
+                        if len(domains) > 5:
+                            log.info(f"   ... y {len(domains) - 5} más\n")
+                        
                         # Guardar dominios en Supabase
+                        log.info(f"💾 Guardando {len(domains)} dominios en Supabase...")
                         await self._save_domains_to_supabase(user_id, domains)
                         
                         # Log de progreso
@@ -370,11 +400,14 @@ class DomainHunterWorker:
                             domain="system",
                             message=f"✅ {len(domains)} dominios nuevos agregados a la cola"
                         )
+                        log.info(f"✅ Dominios guardados correctamente\n")
                     else:
-                        log.warning(f"⚠️  No se encontraron dominios válidos en esta búsqueda")
+                        log.warning(f"⚠️  No se encontraron dominios válidos en esta búsqueda\n")
                     
                     # Delay antes de procesar el siguiente usuario
-                    await asyncio.sleep(random.randint(5, 15))
+                    delay = random.randint(5, 15)
+                    log.info(f"⏳ Esperando {delay}s antes del siguiente usuario...\n")
+                    await asyncio.sleep(delay)
                 
                 # 3. Delay antes de la siguiente ronda
                 await asyncio.sleep(CHECK_USERS_INTERVAL)
@@ -386,10 +419,14 @@ class DomainHunterWorker:
     async def _update_active_users(self):
         """Obtiene usuarios con bot habilitado desde Supabase."""
         try:
+            log.info("🔍 Consultando Supabase por usuarios con bot_enabled=true...")
+            
             response = self.supabase.table("hunter_configs")\
                 .select("*")\
                 .eq("bot_enabled", True)\
                 .execute()
+            
+            log.info(f"📡 Respuesta de Supabase: {len(response.data)} registros encontrados")
             
             # Actualizar diccionario de usuarios activos
             self.active_users = {
@@ -398,10 +435,16 @@ class DomainHunterWorker:
             }
             
             if self.active_users:
-                log.info(f"👥 {len(self.active_users)} usuario(s) con bot activo")
+                log.info(f"✅ {len(self.active_users)} usuario(s) con bot activo:")
+                for user_id, config in self.active_users.items():
+                    log.info(f"   - Usuario: {user_id[:8]}... | Nicho: {config.get('nicho', 'N/A')} | País: {config.get('pais', 'N/A')}")
+            else:
+                log.warning("⚠️  No se encontraron usuarios con bot_enabled=true")
             
         except Exception as e:
             log.error(f"❌ Error obteniendo usuarios: {e}")
+            import traceback
+            log.error(f"   Traceback: {traceback.format_exc()}")
     
     async def _search_domains_for_user(self, user_id: str, config: dict) -> List[str]:
         """
@@ -908,9 +951,18 @@ class DomainHunterWorker:
 
 async def main():
     """Entry point."""
+    # Log muy visible al inicio
+    print("\n" + "="*70)
+    print("🔍 DOMAIN HUNTER WORKER - STARTING UP")
+    print("="*70)
+    print(f"⏰ Timestamp: {datetime.utcnow().isoformat()}")
+    print(f"🌍 Environment: Railway" if os.getenv("RAILWAY_ENVIRONMENT") else "🏠 Environment: Local")
+    print("="*70 + "\n")
+    
     worker = DomainHunterWorker()
     await worker.start()
 
 
 if __name__ == "__main__":
+    print("\n🚀🚀🚀 DOMAIN HUNTER WORKER - ENTRY POINT REACHED 🚀🚀🚀\n")
     asyncio.run(main())

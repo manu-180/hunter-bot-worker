@@ -1,0 +1,188 @@
+=============================================================================
+✅ CAMBIOS REALIZADOS - Domain Hunter Worker con más logs
+=============================================================================
+
+PROBLEMA IDENTIFICADO:
+- El bot ya estaba habilitado (bot_enabled = true)
+- Solo se veían logs del LeadSniper (bot que manda emails)
+- NO se veían logs del Domain Hunter (bot que busca dominios)
+- El horario terminaba a las 19:00, muy temprano
+
+CAMBIOS REALIZADOS:
+=============================================================================
+
+1. ⏰ HORARIO EXTENDIDO (de 19:00 a 20:00)
+   ----------------------------------------
+   Archivos modificados:
+   - domain_hunter_worker.py (línea 48): BUSINESS_HOURS_END = 20
+   - main.py (línea 36): BUSINESS_HOURS_END = 20
+   
+   Ahora el bot trabajará hasta las 8 PM en vez de 7 PM.
+
+2. 📊 LOGS MEJORADOS - Domain Hunter Worker
+   ------------------------------------------
+   Archivos modificados:
+   - domain_hunter_worker.py
+   
+   Logs agregados:
+   
+   a) Al iniciar el worker:
+      - Versión del código (fingerprint)
+      - Hora actual en Argentina y UTC
+      - Estado del horario laboral
+      - URLs de Supabase
+      - Total de nichos, países, ciudades disponibles
+   
+   b) En cada iteración del loop:
+      - Banner visual separando iteraciones
+      - Consulta a Supabase con resultado
+      - Lista de usuarios encontrados con sus nichos
+      - Hora actual detallada
+      - Estado del horario laboral en cada check
+   
+   c) Al procesar cada usuario:
+      - Banner con datos del usuario
+      - Nicho, país, ciudades configuradas
+      - Cada dominio encontrado (primeros 5)
+      - Confirmación de guardado en Supabase
+      - Delays entre búsquedas
+   
+   d) En cada búsqueda de SerpAPI:
+      - Query exacta que se envía
+      - Página actual
+      - Resultados devueltos
+      - Hora exacta del call (auditoría de créditos)
+
+3. 🚀 LOGS MEJORADOS - Start Workers
+   -----------------------------------
+   Archivos modificados:
+   - start_workers.py
+   
+   Logs agregados:
+   - Versión del manager
+   - PIDs de ambos workers
+   - Mensaje de qué hace cada worker
+   - Separadores visuales
+
+4. 🔍 LOGS DE ENTRY POINT
+   ------------------------
+   Agregado al final de domain_hunter_worker.py:
+   - Print muy visible cuando el script se ejecuta
+   - Timestamp UTC
+   - Detección de ambiente (Railway vs Local)
+
+=============================================================================
+CÓMO VERIFICAR QUE FUNCIONA
+=============================================================================
+
+1. Hacer commit y push a Railway:
+   
+   git add .
+   git commit -m "Add extensive logging to domain hunter worker"
+   git push origin main
+
+2. En Railway, esperar el deploy (2-3 minutos)
+
+3. Ir a los logs y buscar:
+   
+   ✅ Debe aparecer:
+   - "🚀🚀🚀 DOMAIN HUNTER WORKER - ENTRY POINT REACHED"
+   - "🔍 DOMAIN HUNTER WORKER - Iniciando"
+   - "🔖 VERSION: horario_extended_v3"
+   - "📊 ESTADO ACTUAL: ✅ DENTRO de horario laboral"
+   - "👥 X usuario(s) con bot activo"
+   - "🔍 Consultando Supabase por usuarios con bot_enabled=true..."
+
+   ❌ Si NO aparece:
+   - El domain_hunter_worker.py no se está ejecutando
+   - Revisar que el Procfile tenga: worker: python start_workers.py
+   - Revisar que start_workers.py esté iniciando ambos workers
+
+4. Verificar que está buscando dominios:
+   
+   En los logs debe aparecer cada 60 segundos:
+   - "🔄 Nueva iteración del loop principal"
+   - "🎯 Procesando usuario: XXXXX..."
+   - "🔍 Iniciando búsqueda de dominios..."
+   - "💰 SERPAPI CALL: hora Argentina XX:XX"
+   - "✅ Encontrados X dominios válidos"
+
+5. Verificar en Supabase que se están agregando dominios:
+   
+   SELECT domain, status, created_at
+   FROM leads
+   WHERE user_id = '38152119-7da4-442e-9826-20901c65f42e'
+   ORDER BY created_at DESC
+   LIMIT 20;
+
+=============================================================================
+HORARIOS DE FUNCIONAMIENTO
+=============================================================================
+
+ANTES: 8:00 - 19:00 (hora Argentina)
+AHORA: 8:00 - 20:00 (hora Argentina)
+
+Fuera de horario:
+- El bot se pausa para ahorrar créditos de SerpAPI
+- Se muestra: "⏸️ FUERA DE HORARIO LABORAL"
+- Revisa cada 5 minutos si ya es hora de trabajar
+
+=============================================================================
+ESTRUCTURA DE LOGS EN RAILWAY
+=============================================================================
+
+Deberías ver algo como esto:
+
+[DOMAIN-HUNTER] 🚀🚀🚀 DOMAIN HUNTER WORKER - ENTRY POINT REACHED
+[DOMAIN-HUNTER] 🔍 DOMAIN HUNTER WORKER - Iniciando
+[DOMAIN-HUNTER] ✅ SerpAPI configurada
+[DOMAIN-HUNTER] 🔖 VERSION: horario_extended_v3
+[DOMAIN-HUNTER] 🕐 HORA ACTUAL: Argentina=15:30 | UTC=18:30
+[DOMAIN-HUNTER] ✅ DENTRO de horario laboral
+[DOMAIN-HUNTER] ======================================
+[DOMAIN-HUNTER] 🔄 Nueva iteración del loop principal
+[DOMAIN-HUNTER] ======================================
+[DOMAIN-HUNTER] 🔍 Consultando Supabase por usuarios...
+[DOMAIN-HUNTER] ✅ 1 usuario(s) con bot activo:
+[DOMAIN-HUNTER]    - Usuario: 38152119... | Nicho: gimnasios
+[DOMAIN-HUNTER] 🎯 Procesando usuario: 38152119...
+[DOMAIN-HUNTER] 🔍 Iniciando búsqueda de dominios...
+[DOMAIN-HUNTER] 💰 SERPAPI CALL: hora Argentina 15:30
+[DOMAIN-HUNTER] ✅ Encontrados 15 dominios válidos:
+[DOMAIN-HUNTER]    1. gimnasiofit.com.ar
+[DOMAIN-HUNTER]    2. powerfit.com.ar
+[DOMAIN-HUNTER]    ...
+[DOMAIN-HUNTER] 💾 Guardando 15 dominios en Supabase...
+[DOMAIN-HUNTER] ✅ Dominios guardados correctamente
+
+[LEADSNIPER] 💤 Heartbeat: 0 pendientes, 8 en cola
+
+=============================================================================
+SOLUCIÓN SI NO APARECEN LOGS DEL DOMAIN HUNTER
+=============================================================================
+
+Si después del deploy solo ves logs de [LEADSNIPER] y NO de [DOMAIN-HUNTER]:
+
+1. El start_workers.py no está iniciando ambos workers correctamente
+2. El domain_hunter_worker.py está crasheando al inicio
+
+Solución:
+- Revisar los logs de Railway al inicio del deploy
+- Buscar errores de Python
+- Verificar que las variables de entorno estén configuradas:
+  - SUPABASE_URL
+  - SUPABASE_KEY
+  - SERPAPI_KEY
+
+=============================================================================
+PRÓXIMOS PASOS
+=============================================================================
+
+1. ✅ Hacer commit de los cambios
+2. ✅ Push a Railway
+3. ✅ Esperar deploy (2-3 minutos)
+4. ✅ Verificar logs en Railway
+5. ✅ Confirmar que aparecen logs de [DOMAIN-HUNTER]
+6. ✅ Verificar en Supabase que se agregan dominios nuevos
+
+=============================================================================

@@ -33,7 +33,7 @@ from src.utils.logger import log
 # CONFIGURACIÓN DE HORARIO DE ENVÍO
 # =============================================================================
 BUSINESS_HOURS_START = 8   # 8 AM
-BUSINESS_HOURS_END = 19    # 7 PM (19:00)
+BUSINESS_HOURS_END = 20    # 8 PM (20:00) - EXTENDIDO
 PAUSE_CHECK_INTERVAL = 300  # Revisar cada 5 minutos cuando está pausado
 
 
