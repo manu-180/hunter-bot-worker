@@ -224,25 +224,6 @@ NICHOS = [
 ]
 
 # =============================================================================
-# IMPORTAR BASE DE DATOS DE CIUDADES (2,000+ ciudades)
-# =============================================================================
-# Importamos desde el archivo cities_data.py para mantener el código limpio
-try:
-    from cities_data import CIUDADES_POR_PAIS, PAISES, TOTAL_CIUDADES, TOTAL_PAISES
-    log.info(f"✅ Base de ciudades cargada: {TOTAL_PAISES} países, {TOTAL_CIUDADES} ciudades")
-except ImportError:
-    # Fallback a lista reducida si no encuentra cities_data.py
-    log.warning("⚠️  cities_data.py no encontrado, usando lista reducida")
-    CIUDADES_POR_PAIS = {
-        "Argentina": ["Buenos Aires", "Córdoba", "Rosario", "Mendoza"],
-        "México": ["Ciudad de México", "Guadalajara", "Monterrey"],
-        "Colombia": ["Bogotá", "Medellín", "Cali"],
-    }
-    PAISES = list(CIUDADES_POR_PAIS.keys())
-    TOTAL_CIUDADES = sum(len(c) for c in CIUDADES_POR_PAIS.values())
-    TOTAL_PAISES = len(PAISES)
-
-# =============================================================================
 # FUNCIONES AUXILIARES - HORARIO INTELIGENTE
 # =============================================================================
 
@@ -276,6 +257,24 @@ logging.basicConfig(
     datefmt='%H:%M:%S'
 )
 log = logging.getLogger(__name__)
+
+# =============================================================================
+# IMPORTAR BASE DE DATOS DE CIUDADES (2,000+ ciudades)
+# =============================================================================
+# Debe ir después de definir log para no provocar NameError al iniciar el worker
+try:
+    from cities_data import CIUDADES_POR_PAIS, PAISES, TOTAL_CIUDADES, TOTAL_PAISES
+    log.info(f"✅ Base de ciudades cargada: {TOTAL_PAISES} países, {TOTAL_CIUDADES} ciudades")
+except ImportError:
+    log.warning("⚠️  cities_data.py no encontrado, usando lista reducida")
+    CIUDADES_POR_PAIS = {
+        "Argentina": ["Buenos Aires", "Córdoba", "Rosario", "Mendoza"],
+        "México": ["Ciudad de México", "Guadalajara", "Monterrey"],
+        "Colombia": ["Bogotá", "Medellín", "Cali"],
+    }
+    PAISES = list(CIUDADES_POR_PAIS.keys())
+    TOTAL_CIUDADES = sum(len(c) for c in CIUDADES_POR_PAIS.values())
+    TOTAL_PAISES = len(PAISES)
 
 # =============================================================================
 # DOMAIN HUNTER WORKER

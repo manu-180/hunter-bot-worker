@@ -1,84 +1,9 @@
-"""
-Mailer Service - Email sending with Resend.
-
-This module handles sending outreach emails using the Resend API.
-Implements human-like delays between sends to avoid spam flags.
-"""
-
-import asyncio
-import os
-import random
-from typing import List, Optional
-
-import resend
-from dotenv import load_dotenv
-
-from src.domain.models import Lead, EmailResult, HunterConfig
-from src.utils.logger import log
-
-
-class MailerService:
-    """
-    Service for sending outreach emails via Resend.
-    
-    Features:
-    - Configurable HTML email template
-    - Human-like random delays between sends (10-30 seconds)
-    - Error handling for rate limits and API errors
-    - Detailed logging of all operations
-    """
-
-    # Default email subject (Railway deploy force: 2026-02-05)
-    DEFAULT_SUBJECT = "Tu web está perdiendo clientes - Elevá su nivel ahora"
-
-    def __init__(
-        self,
-        min_delay: int = 10,
-        max_delay: int = 30
-    ) -> None:
-        """
-        Initialize the mailer service.
-        
-        Args:
-            min_delay: Minimum seconds to wait between emails
-            max_delay: Maximum seconds to wait between emails
-        """
-        load_dotenv()
-        
-        api_key = os.getenv("RESEND_API_KEY")
-        if not api_key:
-            raise ValueError("RESEND_API_KEY must be set in environment variables")
-        
-        resend.api_key = api_key
-        
-        self.from_email = os.getenv("FROM_EMAIL", "manuel@botlode.com")
-        self.from_name = os.getenv("FROM_NAME", "Manuel de Botlode")
-        self.min_delay = min_delay
-        self.max_delay = max_delay
-        
-        # Load custom template or use default
-        self._template = self._load_template()
-
-    def _load_template(self) -> str:
-        """
-        Load the email HTML template.
-        
-        Returns:
-            HTML template string with placeholders
-        """
-        # Check for custom template file
-        template_path = os.getenv("EMAIL_TEMPLATE_PATH")
-        if template_path and os.path.exists(template_path):
-            with open(template_path, 'r', encoding='utf-8') as f:
-                return f.read()
-        
-        # Default template
-        return """
 <!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Preview Email - BotLode Hunter</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
@@ -324,6 +249,10 @@ class MailerService:
             display: flex;
             gap: 12px;
             align-items: flex-start;
+            cursor: text;
+        }
+        .code-display:hover {
+            background: #161b22;
         }
         .code-line-number {
             color: #6e7681;
@@ -446,15 +375,6 @@ class MailerService:
             color: #FFC107;
             text-decoration: none;
         }
-        .ps {
-            margin-top: 25px;
-            padding: 15px;
-            background: #FFF3E0;
-            border-radius: 8px;
-            font-style: italic;
-            font-size: 14px;
-            color: #E65100;
-        }
     </style>
 </head>
 <body>
@@ -465,9 +385,9 @@ class MailerService:
         </div>
         
         <div class="content">
-            <p>Hola, {{company_name}}.</p>
+            <p>Hola, TuEmpresa.</p>
             
-            <p>Estuve en tu web {{domain}} y vi que no tenés un asistente virtual como este.</p>
+            <p>Estuve en tu web tuempresa.com y vi que no tenés un asistente virtual como este.</p>
             
             <div class="hook">
                 ¿Cuántos clientes perdés mientras dormís? ¿Y los fines de semana?
@@ -528,7 +448,7 @@ class MailerService:
                 
                 <p class="free-trial-sub">Copiá este código y pegalo antes del <code style="background: rgba(0,255,255,0.15); color: #00ffff; padding: 3px 8px; border-radius: 6px; font-size: 13px; border: 1px solid rgba(0,255,255,0.3);">&lt;/body&gt;</code> de tu web</p>
                 
-                <!-- CARD INTERACTIVA - iframe completo igual que botlode_web/index.html (con src y opacity:1 para pegar en cualquier sitio) -->
+                <!-- CARD INTERACTIVA - iframe completo igual que botlode_web/index.html -->
                 <div class="code-card-wrapper">
                     <div class="code-card-glow"></div>
                     <div class="code-card">
@@ -540,12 +460,12 @@ class MailerService:
                             <div class="copy-badge">📋 CTRL+C</div>
                         </div>
                         
-                        <div class="code-display">
+                        <div class="code-display" onclick="selectCode()" title="Click para seleccionar todo el código">
                             <div class="code-line-number">1</div>
-                            <div class="code-content">
+                            <div class="code-content" id="codeContent">
                                 <span style="color: #ff79c6;">&lt;iframe</span>
                                 <span style="color: #8be9fd;"> id</span><span style="color: #f8f8f2;">=</span><span style="color: #f1fa8c;">"botlode-player"</span>
-                                <span style="color: #8be9fd;"> src</span><span style="color: #f8f8f2;">=</span><span style="color: #f1fa8c;">"https://botlode-player.vercel.app?botId=0038971a-da75-4ddc-8663-d52a6b8f2936&amp;v=2.5"</span>
+                                <span style="color: #8be9fd;"> src</span><span style="color: #f8f8f2;">=</span><span style="color: #f1fa8c;">"https://botlode-player.vercel.app?botId=0038971a-da75-4ddc-8663-d52a6b8f2936&v=2.5"</span>
                                 <span style="color: #8be9fd;"> style</span><span style="color: #f8f8f2;">=</span><span style="color: #f1fa8c;">"position:fixed;bottom:16px;right:16px;width:140px;height:140px;border:none;z-index:9998;pointer-events:none;background:transparent !important;background-color:transparent !important;-webkit-background-color:transparent !important;opacity:1;overflow:hidden;will-change:width,height;transform:translateZ(0);backface-visibility:hidden;-webkit-backface-visibility:hidden"</span>
                                 <span style="color: #8be9fd;"> allow</span><span style="color: #f8f8f2;">=</span><span style="color: #f1fa8c;">"clipboard-write"</span>
                                 <span style="color: #8be9fd;"> loading</span><span style="color: #f8f8f2;">=</span><span style="color: #f1fa8c;">"lazy"</span>
@@ -598,313 +518,40 @@ class MailerService:
             </div>
             
             <center>
-                <a href="{{calendar_link}}" class="cta-button" style="color: #000 !important; text-decoration: none;">BotLode</a>
+                <a href="https://www.botlode.com" class="cta-button" style="color: #000 !important; text-decoration: none;">BotLode</a>
             </center>
             
             <div class="signature">
-                <p><strong>{{sender_name}}</strong></p>
+                <p><strong>Manuel de BotLode</strong></p>
                 <p style="color: #666; font-size: 14px;">Founder @ BotLode</p>
                 <p style="color: #999; font-size: 13px;">El bot que vende mientras dormís</p>
             </div>
         </div>
         
         <div class="footer">
-            <p>Este email fue enviado a <strong>{{email}}</strong> desde <strong>{{domain}}</strong></p>
+            <p>Este email fue enviado a <strong>contacto@tuempresa.com</strong> desde <strong>tuempresa.com</strong></p>
             <p>Si no deseas recibir más correos, respondé a este email con la palabra REMOVER.</p>
             <p style="margin-top: 15px; color: #666;">🤖 Powered by BotLode - <a href="https://www.botlode.com">www.botlode.com</a></p>
         </div>
     </div>
+    
+    <script>
+        function selectCode() {
+            const codeElement = document.getElementById('codeContent');
+            const range = document.createRange();
+            range.selectNodeContents(codeElement);
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+            selection.addRange(range);
+            
+            // Intentar copiar automáticamente
+            try {
+                document.execCommand('copy');
+                alert('¡Código copiado al portapapeles! 🎉');
+            } catch (err) {
+                console.log('Usa Ctrl+C para copiar');
+            }
+        }
+    </script>
 </body>
 </html>
-"""
-
-    def _render_template(self, lead: Lead) -> str:
-        """
-        Render the email template with lead data.
-        
-        Args:
-            lead: Lead object with data to insert
-            
-        Returns:
-            Rendered HTML string
-        """
-        # Extract company name: prefer meta_title (often has company name), else domain stem
-        raw_domain = lead.domain.replace("https://", "").replace("http://", "").rstrip("/").split("/")[0]
-        company_name = lead.meta_title or raw_domain.split(".")[0].replace("-", " ").title()
-        
-        # Replace placeholders
-        html = self._template
-        html = html.replace("{{company_name}}", company_name)
-        html = html.replace("{{domain}}", lead.domain)
-        html = html.replace("{{email}}", lead.email or "")
-        html = html.replace("{{sender_name}}", os.getenv("SENDER_NAME", "El equipo de BotLode"))
-        html = html.replace("{{sender_email}}", self.from_email)
-        html = html.replace("{{calendar_link}}", os.getenv("CALENDAR_LINK", "https://www.botlode.com"))
-        
-        return html
-
-    async def _send_single(self, lead: Lead) -> EmailResult:
-        """
-        Send a single email to a lead.
-        
-        Args:
-            lead: Lead object with email to send to
-            
-        Returns:
-            EmailResult with success status
-        """
-        if not lead.email:
-            return EmailResult(
-                lead_id=lead.id,
-                success=False,
-                error="No email address available"
-            )
-        
-        try:
-            log.email(f"Enviando email a: {lead.email} ({lead.domain})")
-            
-            # Render the template
-            html_content = self._render_template(lead)
-            
-            # Prepare email params
-            params = {
-                "from": f"{self.from_name} <{self.from_email}>",
-                "to": [lead.email],
-                "subject": self._get_subject(lead),
-                "html": html_content,
-            }
-            
-            # Send via Resend
-            response = resend.Emails.send(params)
-            
-            # Check for success
-            if response and response.get("id"):
-                log.success(f"Email enviado exitosamente a {lead.email}")
-                return EmailResult(
-                    lead_id=lead.id,
-                    success=True,
-                    resend_id=response["id"]
-                )
-            else:
-                error_msg = "Respuesta inesperada de Resend API"
-                log.error(f"Error enviando a {lead.email}: {error_msg}")
-                return EmailResult(
-                    lead_id=lead.id,
-                    success=False,
-                    error=error_msg
-                )
-                
-        except Exception as e:
-            error_msg = str(e)[:200]
-            log.error(f"Error enviando a {lead.email}: {error_msg}")
-            return EmailResult(
-                lead_id=lead.id,
-                success=False,
-                error=error_msg
-            )
-
-    def _owner_name_from_lead(self, lead: Lead) -> str:
-        """
-        Derive a friendly owner/recipient name from the lead (e.g. from email).
-        Used to personalize the subject line.
-        """
-        if not lead.email or "@" not in lead.email:
-            return ""
-        local = lead.email.split("@")[0].strip()
-        # Remove numbers and common suffixes, keep letters/dots/hyphens
-        parts = "".join(c for c in local if c.isalpha() or c in ".-_ ").split(".") or [local]
-        # First part as name: capitalize, replace separators with space
-        name = (parts[0] if parts else local).replace("-", " ").replace("_", " ").strip()
-        if not name:
-            return ""
-        return name.title()
-
-    def _get_subject(self, lead: Lead) -> str:
-        """
-        Generate email subject, optionally personalized.
-        Includes owner/recipient name when available (from email).
-        """
-        owner_name = self._owner_name_from_lead(lead)
-
-        custom_subject = os.getenv("EMAIL_SUBJECT")
-        if custom_subject:
-            # Replace placeholders in custom subject
-            subject = custom_subject
-            company_name = lead.meta_title or lead.domain.split('.')[0].title()
-            subject = subject.replace("{{company_name}}", company_name)
-            subject = subject.replace("{{domain}}", lead.domain)
-            subject = subject.replace("{{owner_name}}", owner_name)
-            return subject
-
-        # Default subject with recipient name when available
-        if owner_name:
-            return f"{owner_name}, tu web está perdiendo clientes - Elevá su nivel"
-        return self.DEFAULT_SUBJECT
-
-    async def _human_delay(self) -> None:
-        """Wait a random human-like delay between emails."""
-        delay = random.randint(self.min_delay, self.max_delay)
-        log.info(f"Esperando {delay}s antes del próximo envío...")
-        await asyncio.sleep(delay)
-
-    async def send_batch(self, leads: List[Lead]) -> List[EmailResult]:
-        """
-        Send emails to a batch of leads with human-like delays.
-        
-        Args:
-            leads: List of Lead objects to email
-            
-        Returns:
-            List of EmailResult objects
-        """
-        if not leads:
-            return []
-        
-        log.info(f"Iniciando batch de envío: {len(leads)} emails")
-        results: List[EmailResult] = []
-        
-        for i, lead in enumerate(leads):
-            # Send email
-            result = await self._send_single(lead)
-            results.append(result)
-            
-            # Add human delay between emails (except for the last one)
-            if i < len(leads) - 1:
-                await self._human_delay()
-        
-        # Log summary
-        successful = sum(1 for r in results if r.success)
-        log.info(f"Batch completado: {successful}/{len(leads)} enviados exitosamente")
-        
-        return results
-
-    async def send_single_with_delay(self, lead: Lead) -> EmailResult:
-        """
-        Send a single email and wait for human delay.
-        
-        Useful for processing one email at a time from a queue.
-        
-        Args:
-            lead: Lead object to email
-            
-        Returns:
-            EmailResult with success status
-        """
-        result = await self._send_single(lead)
-        await self._human_delay()
-        return result
-
-    async def send_with_config(self, lead: Lead, config: HunterConfig) -> EmailResult:
-        """
-        Send an email using a specific user's HunterConfig.
-        
-        This method temporarily uses the user's Resend API key and
-        email settings to send the email.
-        
-        Args:
-            lead: Lead object to email
-            config: User's HunterConfig with their Resend credentials
-            
-        Returns:
-            EmailResult with success status
-        """
-        if not lead.email:
-            return EmailResult(
-                lead_id=lead.id,
-                success=False,
-                error="No email address available"
-            )
-        
-        if not config.resend_api_key:
-            return EmailResult(
-                lead_id=lead.id,
-                success=False,
-                error="Resend API key not configured"
-            )
-        
-        try:
-            log.email(f"Enviando email a: {lead.email} ({lead.domain}) con config de usuario")
-            
-            # Temporarily set user's API key
-            resend.api_key = config.resend_api_key
-            
-            # Use user's email settings
-            from_email = config.from_email or self.from_email
-            from_name = config.from_name or self.from_name
-            
-            # Render the template with user's calendar link
-            html_content = self._render_template_with_config(lead, config)
-            
-            # Get subject (from config or default)
-            subject = config.email_subject or self._get_subject(lead)
-            
-            # Prepare email params
-            params = {
-                "from": f"{from_name} <{from_email}>",
-                "to": [lead.email],
-                "subject": subject,
-                "html": html_content,
-            }
-            
-            # Send via Resend
-            response = resend.Emails.send(params)
-            
-            # Wait human delay
-            await self._human_delay()
-            
-            # Check for success
-            if response and response.get("id"):
-                log.success(f"Email enviado exitosamente a {lead.email}")
-                return EmailResult(
-                    lead_id=lead.id,
-                    success=True,
-                    resend_id=response["id"]
-                )
-            else:
-                error_msg = "Respuesta inesperada de Resend API"
-                log.error(f"Error enviando a {lead.email}: {error_msg}")
-                return EmailResult(
-                    lead_id=lead.id,
-                    success=False,
-                    error=error_msg
-                )
-                
-        except Exception as e:
-            error_msg = str(e)[:200]
-            log.error(f"Error enviando a {lead.email}: {error_msg}")
-            return EmailResult(
-                lead_id=lead.id,
-                success=False,
-                error=error_msg
-            )
-
-    def _render_template_with_config(self, lead: Lead, config: HunterConfig) -> str:
-        """
-        Render the email template with lead data and user config.
-        
-        Args:
-            lead: Lead object with data to insert
-            config: User's HunterConfig with their settings
-            
-        Returns:
-            Rendered HTML string
-        """
-        # Extract company name
-        raw_domain = lead.domain.replace("https://", "").replace("http://", "").rstrip("/").split("/")[0]
-        company_name = lead.meta_title or raw_domain.split(".")[0].replace("-", " ").title()
-        
-        # Use user's settings
-        sender_name = config.from_name or os.getenv("SENDER_NAME", "El equipo de BotLode")
-        calendar_link = config.calendar_link or os.getenv("CALENDAR_LINK", "https://www.botlode.com")
-        from_email = config.from_email or self.from_email
-        
-        # Replace placeholders
-        html = self._template
-        html = html.replace("{{company_name}}", company_name)
-        html = html.replace("{{domain}}", lead.domain)
-        html = html.replace("{{email}}", lead.email or "")
-        html = html.replace("{{sender_name}}", sender_name)
-        html = html.replace("{{sender_email}}", from_email)
-        html = html.replace("{{calendar_link}}", calendar_link)
-        
-        return html
