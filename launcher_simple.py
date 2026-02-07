@@ -1,69 +1,83 @@
 """
-Launcher simple que ejecuta ambos workers en paralelo usando multiprocessing.
-Más robusto que subprocess para contenedores Docker.
+Launcher que ejecuta ambos workers en el MISMO proceso usando asyncio.gather.
+
+Esto es mucho más confiable que multiprocessing o shell scripts en containers Docker/Railway:
+- No depende de shell scripts (evita problemas de CRLF, permisos, buffering)
+- No depende de multiprocessing (evita problemas de stdout en containers)
+- Ambos workers comparten el mismo event loop y los logs se ven directamente
 """
-import multiprocessing
+import asyncio
 import sys
+import signal
 from datetime import datetime
 
 
-def run_domain_hunter():
-    """Ejecuta el domain hunter worker."""
-    print(f"\n[{datetime.now().strftime('%H:%M:%S')}] [DOMAIN-HUNTER] Iniciando...\n", flush=True)
+async def run_all():
+    """Ejecuta ambos workers como tareas asyncio concurrentes."""
+    print("\n" + "="*70, flush=True)
+    print("HUNTERBOT - ASYNC LAUNCHER v3", flush=True)
+    print("="*70, flush=True)
+    print(f"Timestamp: {datetime.utcnow().isoformat()} UTC", flush=True)
+    print("Modo: asyncio.gather (mismo proceso, mismo event loop)", flush=True)
+    print("="*70 + "\n", flush=True)
+
+    # Importar módulos
+    print("[LAUNCHER] Importando domain_hunter_worker...", flush=True)
     try:
         import domain_hunter_worker
-        import asyncio
-        asyncio.run(domain_hunter_worker.main())
+        print("[LAUNCHER] OK - domain_hunter_worker importado", flush=True)
     except Exception as e:
-        print(f"\n[DOMAIN-HUNTER] ERROR FATAL: {e}\n", flush=True)
+        print(f"[LAUNCHER] ERROR FATAL importando domain_hunter_worker: {e}", flush=True)
         import traceback
         traceback.print_exc()
         sys.exit(1)
 
-
-def run_leadsniper():
-    """Ejecuta el leadsniper worker."""
-    print(f"\n[{datetime.now().strftime('%H:%M:%S')}] [LEADSNIPER] Iniciando...\n", flush=True)
+    print("[LAUNCHER] Importando main (LeadSniper)...", flush=True)
     try:
-        import main
-        import asyncio
-        asyncio.run(main.main())
+        import main as leadsniper_main
+        print("[LAUNCHER] OK - main (LeadSniper) importado", flush=True)
     except Exception as e:
-        print(f"\n[LEADSNIPER] ERROR FATAL: {e}\n", flush=True)
+        print(f"[LAUNCHER] ERROR FATAL importando main: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
+
+    # Setup signal handlers para shutdown graceful
+    loop = asyncio.get_event_loop()
+    if sys.platform != "win32":
+        def signal_handler():
+            print("\n[LAUNCHER] Señal de terminación recibida. Deteniendo workers...", flush=True)
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(sig, signal_handler)
+
+    # Ejecutar ambos workers concurrentemente
+    print("\n[LAUNCHER] Iniciando ambos workers con asyncio.gather...", flush=True)
+    print("[LAUNCHER] 1. DOMAIN-HUNTER: Busca dominios en Google (SerpAPI)", flush=True)
+    print("[LAUNCHER] 2. LEADSNIPER: Scrapea emails y envía", flush=True)
+    print("[LAUNCHER] " + "="*70 + "\n", flush=True)
+
+    try:
+        await asyncio.gather(
+            domain_hunter_worker.main(),
+            leadsniper_main.main(),
+        )
+    except KeyboardInterrupt:
+        print("\n[LAUNCHER] Interrumpido por el usuario", flush=True)
+    except Exception as e:
+        print(f"\n[LAUNCHER] Error fatal: {e}", flush=True)
         import traceback
         traceback.print_exc()
         sys.exit(1)
 
 
 if __name__ == "__main__":
-    print("\n" + "="*70)
-    print("HUNTERBOT - LAUNCHER SIMPLE v2")
-    print("="*70)
-    print(f"Timestamp: {datetime.now().isoformat()}")
-    print("Iniciando ambos workers en paralelo usando multiprocessing...")
-    print("="*70 + "\n")
-    
-    # Crear procesos
-    p1 = multiprocessing.Process(target=run_domain_hunter, name="DOMAIN-HUNTER")
-    p2 = multiprocessing.Process(target=run_leadsniper, name="LEADSNIPER")
-    
-    # Iniciar ambos
-    p1.start()
-    p2.start()
-    
-    print(f"[MANAGER] Domain Hunter PID: {p1.pid}")
-    print(f"[MANAGER] LeadSniper PID: {p2.pid}")
-    print(f"[MANAGER] Ambos workers iniciados correctamente\n")
-    
+    print("\n*** HUNTERBOT LAUNCHER - ENTRY POINT ***\n", flush=True)
     try:
-        # Esperar a que terminen (nunca deberían terminar en condiciones normales)
-        p1.join()
-        p2.join()
+        asyncio.run(run_all())
     except KeyboardInterrupt:
-        print("\n[MANAGER] Interrupcion recibida. Deteniendo workers...")
-        p1.terminate()
-        p2.terminate()
-        p1.join()
-        p2.join()
-        print("[MANAGER] Workers detenidos correctamente")
-        sys.exit(0)
+        print("\n[LAUNCHER] Detenido por el usuario")
+    except Exception as e:
+        print(f"\n[LAUNCHER] Error fatal: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)

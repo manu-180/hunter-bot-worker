@@ -42,9 +42,6 @@ RUN playwright install chromium
 # Copiar el resto del código
 COPY . .
 
-# Hacer el script de inicio ejecutable
-RUN chmod +x start.sh
-
 # Comando para ejecutar ambos workers en paralelo
-# Usar script bash para garantizar que ambos se ejecuten
-CMD ["./start.sh"]
+# Usa launcher Python puro con asyncio.gather (más confiable que shell scripts en containers)
+CMD ["python", "-u", "launcher_simple.py"]
