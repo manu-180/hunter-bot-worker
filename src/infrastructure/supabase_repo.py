@@ -6,7 +6,7 @@ implementing the Repository pattern for clean separation of concerns.
 """
 
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 from uuid import UUID
 
@@ -14,6 +14,10 @@ from supabase import create_client, Client
 from dotenv import load_dotenv
 
 from src.domain.models import Lead, LeadStatus, LeadUpdate, ScrapingResult, HunterConfig
+from src.utils.logger import log
+
+# Maximum time a lead can stay in a transient state before being considered stuck
+STUCK_LEAD_TIMEOUT_MINUTES = 15
 
 
 class SupabaseRepository:
@@ -108,7 +112,8 @@ class SupabaseRepository:
                 .execute()
             )
             return len(response.data) > 0
-        except Exception:
+        except Exception as e:
+            log.error(f"Error en mark_as_scraping({lead_id}): {e}")
             return False
 
     def mark_as_scraped(
@@ -153,7 +158,8 @@ class SupabaseRepository:
                 .execute()
             )
             return len(response.data) > 0
-        except Exception:
+        except Exception as e:
+            log.error(f"Error en mark_as_scraped({lead_id}): {e}")
             return False
 
     def mark_as_sending(self, lead_id: UUID) -> bool:
@@ -175,7 +181,8 @@ class SupabaseRepository:
                 .execute()
             )
             return len(response.data) > 0
-        except Exception:
+        except Exception as e:
+            log.error(f"Error en mark_as_sending({lead_id}): {e}")
             return False
 
     def mark_as_sent(self, lead_id: UUID) -> bool:
@@ -201,7 +208,8 @@ class SupabaseRepository:
                 .execute()
             )
             return len(response.data) > 0
-        except Exception:
+        except Exception as e:
+            log.error(f"Error en mark_as_sent({lead_id}): {e}")
             return False
 
     def mark_as_failed(self, lead_id: UUID, error_message: str) -> bool:
@@ -228,7 +236,8 @@ class SupabaseRepository:
                 .execute()
             )
             return len(response.data) > 0
-        except Exception:
+        except Exception as e:
+            log.error(f"Error en mark_as_failed({lead_id}): {e}")
             return False
 
     def update_lead(self, lead_id: UUID, data: LeadUpdate) -> bool:
@@ -260,7 +269,8 @@ class SupabaseRepository:
                 .execute()
             )
             return len(response.data) > 0
-        except Exception:
+        except Exception as e:
+            log.error(f"Error en update_lead({lead_id}): {e}")
             return False
 
     def get_lead_by_id(self, lead_id: UUID) -> Optional[Lead]:
@@ -282,7 +292,8 @@ class SupabaseRepository:
                 .execute()
             )
             return Lead(**response.data) if response.data else None
-        except Exception:
+        except Exception as e:
+            log.error(f"Error en get_lead_by_id({lead_id}): {e}")
             return None
 
     def insert_lead(self, domain: str) -> Optional[Lead]:
@@ -302,12 +313,16 @@ class SupabaseRepository:
                 .execute()
             )
             return Lead(**response.data[0]) if response.data else None
-        except Exception:
+        except Exception as e:
+            log.error(f"Error en insert_lead({domain}): {e}")
             return None
 
     def get_stats(self, user_id: Optional[str] = None) -> dict:
         """
-        Get statistics about leads in each status.
+        Get statistics about leads in the most important statuses.
+        
+        Only queries pending and queued_for_send (the actionable ones)
+        to minimize database load.
         
         Args:
             user_id: Optional user ID for multi-tenant filtering
@@ -315,18 +330,83 @@ class SupabaseRepository:
         Returns:
             Dictionary with counts for each status
         """
-        stats = {}
-        for status in LeadStatus:
-            query = (
+        try:
+            stats = {status.value: 0 for status in LeadStatus}
+            
+            for status in [LeadStatus.PENDING, LeadStatus.QUEUED_FOR_SEND]:
+                q = (
+                    self.client.table(self.table_name)
+                    .select("id", count="exact")
+                    .eq("status", status.value)
+                )
+                if user_id:
+                    q = q.eq("user_id", user_id)
+                response = q.execute()
+                stats[status.value] = response.count or 0
+            
+            return stats
+        except Exception as e:
+            log.error(f"Error en get_stats: {e}")
+            return {status.value: 0 for status in LeadStatus}
+
+    def get_sent_count(self, user_id: Optional[str] = None) -> int:
+        """
+        Total de emails ya enviados (status='sent').
+        
+        Se usa para el límite de warm-up: una vez alcanzado MAX_TOTAL_EMAILS_SENT,
+        el bot deja de buscar dominios y de enviar más emails.
+        
+        Args:
+            user_id: Si se pasa, cuenta solo los de ese usuario; si None, cuenta global.
+        
+        Returns:
+            Número de leads con status 'sent'
+        """
+        try:
+            q = (
                 self.client.table(self.table_name)
                 .select("id", count="exact")
-                .eq("status", status.value)
+                .eq("status", LeadStatus.SENT.value)
             )
             if user_id:
-                query = query.eq("user_id", user_id)
-            response = query.execute()
-            stats[status.value] = response.count or 0
-        return stats
+                q = q.eq("user_id", user_id)
+            response = q.execute()
+            return response.count or 0
+        except Exception as e:
+            log.error(f"Error en get_sent_count: {e}")
+            return 0
+
+    def requeue_old_warmup_leads(self, hours: int = 24) -> int:
+        """
+        Vuelve a encolar los leads warm-up (dominio warmup-*.getbotlode.com) que
+        fueron enviados hace más de `hours` horas. Así se les reenvía cada día
+        sin correr el SQL a mano.
+        
+        Returns:
+            Número de leads reencolados
+        """
+        try:
+            cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+            response = (
+                self.client.table(self.table_name)
+                .update({
+                    "status": LeadStatus.QUEUED_FOR_SEND.value,
+                    "sent_at": None,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                    "error_message": None,
+                })
+                .eq("status", LeadStatus.SENT.value)
+                .like("domain", "warmup-%")
+                .lt("sent_at", cutoff)
+                .execute()
+            )
+            count = len(response.data) if response.data else 0
+            if count > 0:
+                log.info(f"🔄 Reencolados {count} leads warm-up (enviados hace +{hours}h)")
+            return count
+        except Exception as e:
+            log.error(f"Error en requeue_old_warmup_leads: {e}")
+            return 0
 
     # =========================================================================
     # Multi-tenant / Hunter Config methods
@@ -351,7 +431,8 @@ class SupabaseRepository:
                 .execute()
             )
             return HunterConfig(**response.data) if response.data else None
-        except Exception:
+        except Exception as e:
+            log.error(f"Error en get_user_config({user_id}): {e}")
             return None
 
     def get_lead_with_user(self, lead_id: UUID) -> Optional[Lead]:
@@ -373,7 +454,8 @@ class SupabaseRepository:
                 .execute()
             )
             return Lead(**response.data) if response.data else None
-        except Exception:
+        except Exception as e:
+            log.error(f"Error en get_lead_with_user({lead_id}): {e}")
             return None
 
     def fetch_pending_domains_all_users(self, limit: int = 10) -> List[Lead]:
@@ -382,6 +464,7 @@ class SupabaseRepository:
         
         This method processes leads from all users, returning leads
         with their user_id so we can fetch their specific config.
+        Ordered by created_at ASC for FIFO processing.
         
         Args:
             limit: Maximum number of leads to fetch
@@ -393,7 +476,8 @@ class SupabaseRepository:
             self.client.table(self.table_name)
             .select("*")
             .eq("status", LeadStatus.PENDING.value)
-            .not_.is_("user_id", "null")  # Only process leads with user_id
+            .not_.is_("user_id", "null")
+            .order("created_at", desc=False)
             .limit(limit)
             .execute()
         )
@@ -403,6 +487,7 @@ class SupabaseRepository:
     def fetch_queued_emails_all_users(self, limit: int = 10) -> List[Lead]:
         """
         Fetch queued emails from ALL users (for global worker).
+        Ordered by scraped_at ASC for FIFO processing.
         
         Args:
             limit: Maximum number of leads to fetch
@@ -414,12 +499,54 @@ class SupabaseRepository:
             self.client.table(self.table_name)
             .select("*")
             .eq("status", LeadStatus.QUEUED_FOR_SEND.value)
-            .not_.is_("user_id", "null")  # Only process leads with user_id
+            .not_.is_("user_id", "null")
+            .order("scraped_at", desc=False)
             .limit(limit)
             .execute()
         )
         
         return [Lead(**row) for row in response.data]
+
+    def recover_stuck_leads(self) -> int:
+        """
+        Recover leads stuck in transient states (scraping, sending).
+        
+        If a worker crashes mid-operation, leads can get stuck in
+        'scraping' or 'sending' state indefinitely. This method
+        resets them back to their previous actionable state if they've
+        been stuck longer than STUCK_LEAD_TIMEOUT_MINUTES.
+        
+        Returns:
+            Number of leads recovered
+        """
+        recovered = 0
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(minutes=STUCK_LEAD_TIMEOUT_MINUTES)
+        ).isoformat()
+        
+        for stuck_status, recovery_status in [
+            (LeadStatus.SCRAPING, LeadStatus.PENDING),
+            (LeadStatus.SENDING, LeadStatus.QUEUED_FOR_SEND),
+        ]:
+            try:
+                response = (
+                    self.client.table(self.table_name)
+                    .update({"status": recovery_status.value})
+                    .eq("status", stuck_status.value)
+                    .lt("updated_at", cutoff)
+                    .execute()
+                )
+                count = len(response.data)
+                if count > 0:
+                    log.warning(
+                        f"Recuperados {count} leads stuck en '{stuck_status.value}' "
+                        f"→ '{recovery_status.value}'"
+                    )
+                    recovered += count
+            except Exception as e:
+                log.error(f"Error recuperando leads stuck ({stuck_status.value}): {e}")
+        
+        return recovered
 
     def get_all_active_configs(self) -> List[HunterConfig]:
         """
@@ -436,5 +563,6 @@ class SupabaseRepository:
                 .execute()
             )
             return [HunterConfig(**row) for row in response.data]
-        except Exception:
+        except Exception as e:
+            log.error(f"Error en get_all_active_configs: {e}")
             return []

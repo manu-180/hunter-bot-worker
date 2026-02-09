@@ -1,28 +1,47 @@
 """
-Domain Hunter Worker - Worker daemon para buscar dominios automáticamente desde Google.
+Domain Hunter Worker v8 - Worker daemon optimizado para buscar dominios.
 
-Este worker:
-1. Consulta periódicamente Supabase para encontrar usuarios con bot_enabled = true
-2. Para cada usuario activo, busca dominios en Google según su nicho
-3. Cada 5 dominios encontrados, los inserta en la tabla leads del usuario
-4. Continúa 24/7 con pausas largas entre búsquedas para evitar bloqueos
-5. Trabaja en sinergia con main.py (LeadSniper) que procesa los dominios agregados
+Optimizaciones v8 (sobre v7):
+- Query limpia: sin -site: exclusions en query (filtrado post-extraction con blacklist)
+- num=10: valor real de Google (antes num=100 era ignorado)
+- Maps x4: paginación extendida start=0/20/40/60 (antes solo 0/20)
+- Web paginación: start=0/10 para obtener páginas 2+ de la misma query
+- Cache cross-user: reusar resultados de queries idénticas (0 créditos)
+- Per-user cache: session cache separado por usuario (sin cross-contamination)
+- User config: respeta nicho/ciudades/pais de la config del usuario
+- Related searches: captura sugerencias gratuitas de Google
+- Sin doble delay: un solo sleep entre búsquedas (antes había 2)
+- Constantes optimizadas: frozensets a nivel de módulo (no per-call)
+- Secuencia 12 pasos: Maps-first (4 maps + 8 web), ~200 dominios/combinación
+
+Optimizaciones v7 (heredadas):
+- Multi-source extraction: organic + local + KG + ads + places (7 fuentes)
+- Blacklist O(1): lookup optimizado con sets separados
+- Credit management: pre-check periódico, budget por usuario
+- Parallel users: procesamiento concurrente con semáforo
 
 Usage:
     python domain_hunter_worker.py
 """
 
 import asyncio
+import hashlib
+import json
 import logging
 import os
 import random
-from datetime import datetime
-from typing import List, Set
-from urllib.parse import urlparse, parse_qs
+import time
+import traceback
+import urllib.request
+from typing import Dict, List, Optional, Set, Tuple
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 from serpapi import GoogleSearch
 from supabase import create_client, Client
+
+from src.config import BotConfig
+from src.utils.timezone import is_business_hours, format_argentina_time, format_utc_time, utc_now
 
 # =============================================================================
 # CONFIGURACIÓN
@@ -34,218 +53,319 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")  # service_role key
 SERPAPI_KEY = os.getenv("SERPAPI_KEY")  # SerpAPI key para búsquedas
 
-# Delays para evitar bloqueo (en segundos)
-MIN_DELAY_BETWEEN_SEARCHES = 3  # Reducido de 30s a 3s (SerpAPI protege contra bloqueos)
-MAX_DELAY_BETWEEN_SEARCHES = 10  # Reducido de 90s a 10s
-
-# Cada cuánto checar por usuarios con bot enabled (en segundos)
-CHECK_USERS_INTERVAL = 60  # 1 minuto
+# Delays y configuración centralizada via BotConfig (overrideable via env vars)
+MIN_DELAY_BETWEEN_SEARCHES = BotConfig.MIN_DELAY_BETWEEN_SEARCHES
+MAX_DELAY_BETWEEN_SEARCHES = BotConfig.MAX_DELAY_BETWEEN_SEARCHES
+CHECK_USERS_INTERVAL = BotConfig.CHECK_USERS_INTERVAL
+BUSINESS_HOURS_START = BotConfig.BUSINESS_HOURS_START
+BUSINESS_HOURS_END = BotConfig.BUSINESS_HOURS_END
+PAUSE_CHECK_INTERVAL = BotConfig.PAUSE_CHECK_INTERVAL
 
 # =============================================================================
-# HORARIO INTELIGENTE - Pausar búsquedas de noche para no gastar SerpAPI
+# v8: QUERY_SITE_EXCLUSIONS eliminadas del query string.
+# Razón: Google tiene límite de ~32 palabras. 14 operadores -site: consumían
+# ~300 chars y podían truncar la query real. Ahora se filtran post-extraction
+# con la blacklist O(1) que ya existe (_ALL_BLACKLIST), que es más precisa
+# y no desperdicia espacio en la query.
 # =============================================================================
-BUSINESS_HOURS_START = 8   # 8 AM (hora Argentina)
-BUSINESS_HOURS_END = 21    # 9 PM (hora Argentina) - EXTENDIDO +1h
-PAUSE_CHECK_INTERVAL = 300  # Revisar cada 5 minutos cuando está pausado
 
-# Batch size: cuántos dominios intentar agregar por búsqueda (solo los nuevos se insertan)
-DOMAIN_BATCH_SIZE = 20  # Más candidatos por ronda para que la cola PEND pueda crecer
-
-# User Agents para rotar
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15",
+# =============================================================================
+# TEMPLATES DE QUERY EXPANDIDOS v7
+# 8 templates con operadores avanzados para máxima diversidad.
+# Cada combinación usa hasta MAX_PAGES_PER_COMBINATION templates (rotación).
+# Índices pares = web search, índices impares = Google Maps search.
+# =============================================================================
+QUERY_TEMPLATES_WEB = [
+    "{nicho} en {ciudad}",                                    # 0: Búsqueda directa
+    "{nicho} {ciudad} contacto email",                        # 1: Datos de contacto
+    "mejores {nicho} {ciudad} 2025",                          # 2: Rankings actuales
+    "{nicho} {ciudad} whatsapp telefono sitio web",           # 3: Negocios con presencia web
+    'intitle:"{nicho}" "{ciudad}" -directorio -listado',      # 4: Excluir directorios
+    "{nicho} profesional {ciudad} presupuesto",               # 5: Intent comercial
+    "{nicho} recomendados {ciudad} opiniones",                # 6: Reviews con negocios
+    "empresas de {nicho} en {ciudad} servicios",              # 7: B2B intent
 ]
 
-# Blacklist de dominios a ignorar (ampliada y mejorada)
-BLACKLIST_DOMAINS = {
+QUERY_TEMPLATES_MAPS = [
+    "{nicho} en {ciudad}",                                    # Query directa para Maps
+    "{nicho} {ciudad}",                                       # Query corta para Maps
+]
+
+# =============================================================================
+# SECUENCIA DE BÚSQUEDA v8 - Prioriza Maps (20+ dominios/crédito) sobre Web (~10)
+# Cada entrada: (tipo, índice_template, start_offset)
+#   - tipo: 'web' o 'maps'
+#   - índice_template: qué template de query usar
+#   - start_offset: paginación (web: 0/10/20, maps: 0/20/40/60)
+# =============================================================================
+SEARCH_SEQUENCE = [
+    ("maps", 0, 0),     # Maps pag 1: ~20 negocios con website
+    ("web",  0, 0),     # Web directa: ~10 orgánicos + local pack + KG
+    ("maps", 0, 20),    # Maps pag 2: ~20 más
+    ("web",  1, 0),     # Web "contacto email"
+    ("maps", 1, 40),    # Maps pag 3: ~20 más (query corta)
+    ("web",  2, 0),     # Web "mejores X 2025"
+    ("maps", 1, 60),    # Maps pag 4: ~20 más
+    ("web",  3, 0),     # Web "whatsapp telefono sitio web"
+    ("web",  4, 0),     # Web intitle: operador avanzado
+    ("web",  0, 10),    # Web directa pag 2: 10 orgánicos más
+    ("web",  5, 0),     # Web "profesional presupuesto"
+    ("web",  1, 10),    # Web "contacto email" pag 2
+]
+
+# Máximo de búsquedas a probar por combinación (cada una = 1 crédito)
+MAX_PAGES_PER_COMBINATION = len(SEARCH_SEQUENCE)
+
+# Ratio mínimo de dominios nuevos para justificar seguir con más templates
+MIN_NEW_RATIO_FOR_PAGINATION = 0.15  # Si <15% son nuevos, no gastar más créditos
+
+# Mapeo correcto de país → código ISO 3166-1 para parámetro gl de Google
+PAIS_GL_CODE = {
+    "Argentina": "ar",
+    "México": "mx",
+    "Colombia": "co",
+    "Chile": "cl",
+    "Perú": "pe",
+    "Ecuador": "ec",
+    "Venezuela": "ve",
+    "Bolivia": "bo",
+    "Paraguay": "py",
+    "Uruguay": "uy",
+    "República Dominicana": "do",
+    "Guatemala": "gt",
+    "Honduras": "hn",
+    "Nicaragua": "ni",
+    "Costa Rica": "cr",
+    "Panamá": "pa",
+    "El Salvador": "sv",
+}
+
+# =============================================================================
+# BLACKLIST OPTIMIZADA v7 - Separada en dos sets para lookup O(1)
+# BLACKLIST_SUFFIXES: entradas con punto → se comparan con endswith()
+# BLACKLIST_NAME_PARTS: palabras sueltas → se buscan en el name_part del dominio
+# =============================================================================
+
+_ALL_BLACKLIST = {
     # Redes sociales
     'google', 'facebook', 'instagram', 'twitter', 'linkedin', 'youtube',
-    'tiktok', 'pinterest', 'whatsapp', 'telegram', 'snapchat',
+    'tiktok', 'pinterest', 'whatsapp', 'telegram', 'snapchat', 'reddit',
+    'threads.net', 'x.com',
     
     # Portales inmobiliarios (queremos inmobiliarias reales, no portales)
     'mercadolibre', 'olx', 'zonaprop', 'argenprop', 'properati',
     'trovit', 'lamudi', 'inmuebles24', 'metrocuadrado', 'fincaraiz',
+    'nuroa', 'icasas', 'plusvalia', 'segundamano', 'vivanuncios',
+    'doomos', 'nocnok',
     
     # Gobierno y entidades públicas
-    'gob.ar', 'gov.ar', 'gobierno', '.mil.', 'afip', 'anses', 'arba',
-    'provincia.', 'municipalidad', 'intendencia',
+    'gob.ar', 'gov.ar', 'gobierno', 'afip', 'anses', 'arba',
+    'municipalidad', 'intendencia',
     
     # Portales de noticias y medios
     'clarin', 'lanacion', 'infobae', 'pagina12', 'lavoz', 'losandes',
-    'telam', 'perfil', 'ambito', 'cronista',
+    'telam', 'perfil', 'ambito', 'cronista', 'elpais.com', 'bbc.com',
+    'cnn.com', 'elnacional', 'eluniversal', 'milenio', 'excelsior',
+    'eltiempo.com', 'semana.com',
     
     # Portales educativos
-    'edu.ar', 'educacion', 'universidad', '.edu', 'campus',
+    'edu.ar', 'educacion', 'universidad', 'campus',
     
     # Bancos y servicios financieros
     'banco', 'santander', 'galicia', 'nacion', 'provincia.com',
     'hsbc', 'bbva', 'icbc', 'frances', 'supervielle',
     
     # Organizaciones y ONGs
-    'wikipedia', 'wikidata', 'ong', 'fundacion',
+    'wikipedia', 'wikidata', 'fundacion',
     
     # Portales de empleo
-    'zonajobs', 'computrabajo', 'bumeran', 'indeed', 'linkedin',
+    'zonajobs', 'computrabajo', 'bumeran', 'indeed',
+    'glassdoor', 'laborum',
     
     # Portales genéricos y marketplaces
     'booking.com', 'airbnb', 'tripadvisor', 'yelp', 'foursquare',
     'despegar', 'almundo', 'decolar', 'expedia',
+    'amazon.com', 'ebay.com', 'alibaba', 'aliexpress',
     
     # Otros sitios a evitar
-    'maps.google', '/maps/', 'youtube', 'blogspot', 'wordpress.com',
-    'wix.com', 'weebly', 'tumblr', '.gov', 'gmail', 'outlook',
-    'hotmail', 'yahoo', 'ejemplo', 'example', 'test', 'demo',
+    'blogspot', 'wordpress.com', 'wix.com', 'weebly', 'tumblr',
+    'gmail', 'outlook', 'hotmail', 'yahoo',
+    
+    # Directorios, agregadores y listados (NO son negocios reales)
+    'paginasamarillas', 'guialocal', 'cylex', 'infoisinfo', 'tupalo',
+    'hotfrog', 'brownbook', 'tuugo', 'findglocal', 'alignable',
+    'manta.com', 'bbb.org', 'chamberofcommerce', 'justdial',
+    'sulekha', 'yellowpages', 'whitepages', 'superpages',
+    'citysearch', 'local.com', 'merchantcircle', 'showmelocal',
+    'kompass', 'europages', 'dnb.com', 'crunchbase', 'zoominfo',
+    'clutch.co', 'goodfirms', 'sortlist', 'designrush', 'upcity',
+    'bark.com', 'thumbtack', 'angi.com', 'homeadvisor',
+    'doctoralia', 'doctoranytime', 'topdoctors', 'saludonnet',
+    'practo', 'zocdoc',
+    'guiamedicadelsur', 'doctores.com',
+    
+    # Plataformas de reviews y listados
+    'trustpilot', 'sitejabber', 'reviewsolicitors', 'getapp',
+    'capterra', 'g2.com', 'softwareadvice', 'sourceforge',
+    
+    # CDNs, hosting, tech platforms (no son negocios target)
+    'cloudflare', 'amazonaws', 'azurewebsites', 'herokuapp',
+    'netlify', 'vercel', 'firebase', 'appspot', 'github',
+    'gitlab', 'bitbucket', 'stackexchange', 'stackoverflow',
+    'medium.com', 'substack',
+    
+    # Dominios genéricos de servicios/plataformas LATAM
+    'mercadopago', 'mercadoshops', 'tiendanube', 'empretienda',
+    'mitienda', 'pedidosya', 'rappi', 'uber', 'cabify', 'didi',
 }
 
+# Separar: entradas con punto = suffix match, sin punto = name_part match
+BLACKLIST_SUFFIXES: frozenset = frozenset(b for b in _ALL_BLACKLIST if '.' in b)
+BLACKLIST_NAME_PARTS: frozenset = frozenset(b for b in _ALL_BLACKLIST if '.' not in b)
+
 # Extensiones de dominio gubernamentales a filtrar
-GOVERNMENT_TLD = {
-    '.gob.', '.gov.', '.mil.', '.edu.ar'
-}
+GOVERNMENT_TLD: frozenset = frozenset({
+    '.gob.', '.gov.', '.mil.', '.edu.ar', '.edu.mx', '.edu.co',
+    '.edu.cl', '.edu.pe', '.edu.ec', '.ac.',
+})
+
+# =============================================================================
+# TLDs VÁLIDOS para negocios en LATAM
+# Solo aceptamos dominios con extensiones que un negocio real usaría
+# =============================================================================
+VALID_BUSINESS_TLDS: frozenset = frozenset({
+    # Genéricos
+    '.com', '.net', '.org', '.info', '.biz', '.co',
+    # Argentina
+    '.com.ar', '.ar',
+    # México
+    '.com.mx', '.mx',
+    # Colombia
+    '.com.co',
+    # Chile
+    '.cl',
+    # Perú
+    '.com.pe', '.pe',
+    # Ecuador
+    '.com.ec', '.ec',
+    # Venezuela
+    '.com.ve', '.ve',
+    # Bolivia
+    '.com.bo', '.bo',
+    # Paraguay
+    '.com.py', '.py',
+    # Uruguay
+    '.com.uy', '.uy',
+    # República Dominicana
+    '.com.do', '.do',
+    # Centroamérica
+    '.com.gt', '.gt', '.com.hn', '.hn', '.com.ni', '.ni',
+    '.com.cr', '.cr', '.com.pa', '.pa', '.com.sv', '.sv',
+    # Otros válidos
+    '.io', '.app', '.dev', '.store', '.shop', '.online',
+    '.site', '.website', '.tech', '.digital', '.agency',
+    '.studio', '.design', '.consulting', '.legal', '.dental',
+    '.health', '.clinic', '.vet', '.salon', '.spa',
+    '.fitness', '.coach', '.photography', '.travel', '.realty',
+    '.auto', '.car', '.restaurant', '.cafe', '.bar',
+    '.hotel', '.tours',
+})
+
+# =============================================================================
+# v8: CONSTANTES MOVIDAS A NIVEL DE MÓDULO (antes se creaban en cada llamada)
+# Evita garbage collection innecesario en cada invocación de _is_valid_domain
+# =============================================================================
+INVALID_DOMAIN_CHARS: frozenset = frozenset('[]{|}\\  %?=&#')
+
+DIRECTORY_PATTERNS: frozenset = frozenset({
+    'directorio', 'listado', 'guia-de', 'ranking', 'top10',
+    'top-10', 'mejores-', 'buscar-', 'encontrar-', 'busca-',
+    'encuentra-', 'compara-', 'comparar-', 'comparador',
+    'paginas-', 'sitios-', 'empresas-de-', 'negocios-de-',
+    'listof', 'directory', 'listing', 'finder', 'locator',
+    'yellowpage', 'whitepage', 'reviews-', 'opiniones-de-',
+})
+
+EXAMPLE_DOMAIN_WORDS: tuple = ('ejemplo', 'example', 'test.', 'demo.', 'sample', 'localhost')
+
+# Dominios EXACTOS de plataformas gratuitas / subdominios (filtrar por endswith)
+FREE_PLATFORM_SUFFIXES: frozenset = frozenset({
+    '.blogspot.com', '.blogspot.com.ar', '.blogspot.com.mx',
+    '.wordpress.com', '.wix.com', '.wixsite.com',
+    '.weebly.com', '.tumblr.com', '.github.io',
+    '.netlify.app', '.vercel.app', '.herokuapp.com',
+    '.web.app', '.firebaseapp.com', '.appspot.com',
+    '.azurewebsites.net', '.onrender.com',
+    '.carrd.co', '.godaddysites.com', '.squarespace.com',
+    '.jimdosite.com', '.strikingly.com', '.webnode.com',
+    '.empretienda.com.ar', '.mitiendanube.com',
+    '.mercadoshops.com.ar', '.dfrwk.com',
+})
 
 # =============================================================================
 # LISTAS DE ROTACIÓN AUTOMÁTICA
 # =============================================================================
 
-# 120+ nichos con potencial de email y ventas (EXPANDIDO)
+# Nichos con ALTA probabilidad de querer un bot asistente virtual 24/7
+# Ordenados de MAYOR a MENOR probabilidad de conversión
+# Criterios: necesitan captar leads 24/7, agendar turnos/reuniones,
+# responder consultas fuera de horario, y tienen margen para invertir.
 NICHOS = [
-    # ========== SERVICIOS PROFESIONALES (20) ==========
-    "inmobiliarias", "estudios contables", "estudios juridicos", "escribanias",
-    "agencias de marketing", "agencias de marketing digital", "consultoras",
-    "agencias de diseño", "agencias de diseño grafico", "estudios de arquitectura",
-    "desarrolladores web", "consultoras IT", "agencias SEO", "agencias de publicidad",
-    "agencias de social media", "productoras audiovisuales", "estudios de ingenieria",
-    "topografos", "agrimensores", "peritos",
-    
-    # ========== SERVICIOS LOCALES (25) ==========
-    "gimnasios", "centros de estetica", "peluquerias", "barbereias",
-    "spa", "centros de masajes", "salones de belleza", "manicura y pedicura",
-    "clinicas dentales", "clinicas veterinarias", "pet shops", "veterinarias",
-    "talleres mecanicos", "talleres de chapa y pintura", "gomenerias",
-    "lavaderos de autos", "lubricentros", "cerrajerias", "herrerias",
-    "empresas de limpieza", "empresas de mudanzas", "empresas de seguridad",
-    "empresas de vigilancia", "guardias de seguridad", "servicios de seguridad",
-    
-    # ========== CONSTRUCCIÓN Y MANTENIMIENTO (15) ==========
-    "empresas de construccion", "constructoras", "arquitectura y construccion",
-    "electricistas", "plomeros", "gasfiteros", "pintores", "yeseros",
-    "albaniles", "carpinteros", "herreros", "vidrieros",
-    "instaladores de aire acondicionado", "reparacion de electrodomesticos",
-    "techistas",
-    
-    # ========== RETAIL Y COMERCIO (20) ==========
-    "tiendas de ropa", "boutiques", "tiendas de ropa infantil",
-    "joyerias", "relojerias", "opticas", "librerias", "papelerias",
-    "jugueterias", "ferreterias", "viveros", "tiendas de jardineria",
-    "tiendas de deportes", "casas de deportes", "bicicleterias",
-    "tiendas de repuestos", "casas de musica", "instrumentos musicales",
-    "tiendas de electronica", "casas de electrodomesticos",
-    
-    # ========== GASTRONOMÍA (20) ==========
-    "restaurantes", "cafeterias", "cafes", "panaderias", "pastelerias",
-    "pizzerias", "hamburgueserias", "parrillas", "asaderos",
-    "heladerias", "bares", "pubs", "cervecerías artesanales",
-    "catering", "servicios de catering", "rotiserias", "comidas rapidas",
-    "delivery de comida", "cocinas industriales", "confiterias",
-    
-    # ========== SALUD Y BIENESTAR (20) ==========
-    "centros medicos", "clinicas", "consultorios medicos", "policlinicas",
-    "laboratorios", "laboratorios de analisis clinicos", "farmacias",
-    "kinesiologos", "centros de kinesiologia", "fisioterapeutas",
-    "nutricionistas", "dietistas", "psicologos", "terapeutas",
-    "centros de yoga", "centros de pilates", "centros de meditacion",
-    "quiropracticos", "osteopatas", "podologos",
-    
-    # ========== EDUCACIÓN Y CAPACITACIÓN (15) ==========
-    "institutos de idiomas", "academias de ingles", "escuelas de idiomas",
-    "academias de arte", "escuelas de musica", "conservatorios",
-    "centros de capacitacion", "centros de formacion profesional",
-    "guarderias", "jardines de infantes", "jardines maternales",
-    "centros de apoyo escolar", "profesores particulares", "clases particulares",
-    "centros de computacion",
-    
-    # ========== TURISMO Y HOTELERÍA (15) ==========
-    "hoteles", "hostels", "apart hoteles", "cabañas", "posadas",
-    "bed and breakfast", "agencias de turismo", "agencias de viajes",
-    "operadores turisticos", "rent a car", "alquiler de autos",
-    "alquiler de motos", "transporte turistico", "excursiones", "tours",
-    
-    # ========== EVENTOS Y ENTRETENIMIENTO (12) ==========
-    "fotografos", "fotografos profesionales", "estudios fotograficos",
-    "organizadores de eventos", "salones de fiestas", "quintas para eventos",
-    "DJ para eventos", "bandas musicales", "animacion infantil",
-    "alquiler de sonido", "alquiler de luces", "production de eventos",
-    
-    # ========== INDUSTRIA Y PRODUCCIÓN (15) ==========
-    "metalurgicas", "carpinterias", "talleres de soldadura", "torneros",
-    "fabricas de muebles", "aserraderos", "imprentas", "graficas",
-    "serigrafias", "rotulaciones", "ploteos", "empresas de packaging",
-    "fábricas de plástico", "fábricas de productos de limpieza", "textiles",
-    
-    # ========== AGRICULTURA Y GANADERÍA (10) ==========
-    "agronomos", "agroquimicas", "veterinarias rurales", "cabañas ganaderas",
-    "semillerias", "proveedores agricolas", "maquinaria agricola",
-    "criaderos de animales", "granjas", "tambos",
-    
-    # ========== TRANSPORTE Y LOGÍSTICA (12) ==========
-    "empresas de transporte", "logistica", "empresas de fletes", "mudanzas",
-    "transporte de cargas", "correos privados", "mensajerias", "courier",
-    "distribuidoras", "depositos", "almacenes", "galpones",
-    
-    # ========== TECNOLOGÍA Y COMUNICACIONES (10) ==========
-    "desarrollo de software", "programadores", "diseño web", "hosting",
-    "service de computadoras", "reparacion de celulares", "venta de celulares",
-    "accesorios de tecnologia", "CCTV", "camaras de seguridad",
-    
-    # ========== SERVICIOS FINANCIEROS Y SEGUROS (8) ==========
-    "aseguradoras", "productores de seguros", "gestorías", "gestoria automotor",
-    "escribanías", "tramites legales", "financieras", "prestamos",
-    
-    # ========== AUTOMOTOR (10) ==========
-    "concesionarias", "agencias de autos", "compra venta de autos usados",
-    "desarmaderos", "repuestos para autos", "autopartes", "accesorios para autos",
-    "polarizado de autos", "instalacion de alarmas", "audio para autos",
-    
-    # ========== DECORACIÓN Y HOGAR (10) ==========
-    "decoracion de interiores", "diseño de interiores", "cortinas y persianas",
-    "pisos y revestimientos", "alfombras", "pinturerias", "papeles pintados",
-    "mueblerias", "colchonerias", "bazar y menaje",
-    
-    # ========== MASCOTAS Y ANIMALES (8) ==========
-    "veterinarias", "pet shops", "peluqueria canina", "adiestramiento canino",
-    "guarderia para mascotas", "criaderos de perros", "acuarios", "alimento para mascotas",
-    
-    # ========== FLORES Y JARDINERÍA (8) ==========
-    "floristas", "florerías", "viveros", "plantas ornamentales",
-    "paisajismo", "diseño de jardines", "sistemas de riego", "jardineros",
+    # ========== TIER 1 - MÁXIMA PROBABILIDAD (leads 24/7 + alto ticket) ==========
+    "inmobiliarias",                        # 1. Consultas de propiedades a toda hora, alto ticket
+    "clinicas dentales",                    # 2. Turnos, urgencias, presupuestos 24/7
+    "concesionarias de autos",              # 3. Alto ticket, test drives, cotizaciones
+    "centros de estetica",                  # 4. Turnos online, alta competencia digital
+    "clinicas y centros medicos",           # 5. Turnos médicos, consultas de pacientes
+    "hoteles",                              # 6. Reservas 24/7, huéspedes en distintas zonas horarias
+    "agencias de marketing digital",        # 7. Tech-savvy, potenciales revendedores del bot
+    "estudios juridicos",                   # 8. Consultas legales, agendar reuniones, alto ticket
+    "consultorios medicos",                 # 9. Turnos, preguntas frecuentes de pacientes
+    "estudios contables",                   # 10. Consultas de clientes, picos estacionales
+
+    # ========== TIER 2 - ALTA PROBABILIDAD (servicios + agenda de turnos) ==========
+    "aseguradoras",                         # 11. Cotizaciones automáticas, leads constantes
+    "gimnasios",                            # 12. Membresías, horarios de clases, promos
+    "agencias de viajes",                   # 13. Consultas de viajes a toda hora
+    "spa y centros de bienestar",           # 14. Turnos, paquetes, disponibilidad
+    "veterinarias",                         # 15. Turnos, urgencias, consultas
+    "constructoras",                        # 16. Presupuestos, consultas de obra
+    "psicologos y terapeutas",             # 17. Agendar sesiones, privacidad en consultas
+    "estudios de arquitectura",             # 18. Consultas de proyecto, presupuestos
+    "academias e institutos de idiomas",    # 19. Inscripciones, niveles, horarios
+    "centros de capacitacion",              # 20. Cursos, inscripciones, cronogramas
+
+    # ========== TIER 3 - BUENA PROBABILIDAD (eventos + reservas + consultas) ==========
+    "salones de fiestas y eventos",         # 21. Disponibilidad, presupuestos, visitas
+    "fotografos profesionales",             # 22. Reservar sesiones, portafolio
+    "empresas de seguridad",                # 23. Cotización de servicios de monitoreo
+    "consultoras",                          # 24. Captación de leads, agendar reuniones
+    "restaurantes",                         # 25. Reservas de mesa, menú, eventos
+    "rent a car",                           # 26. Disponibilidad, reservas, precios
+    "nutricionistas",                       # 27. Turnos, planes, consultas
+    "kinesiologos y fisioterapeutas",       # 28. Turnos de rehabilitación
+    "catering",                             # 29. Presupuestos de eventos, menús
+    "organizadores de eventos",             # 30. Consultas, disponibilidad, cotización
+
+    # ========== TIER 4 - PROBABILIDAD MEDIA-ALTA (comercio + servicios) ==========
+    "empresas de software",                 # 31. Tech-savvy, demos, onboarding
+    "cabañas y alojamientos turisticos",    # 32. Reservas, disponibilidad, temporadas
+    "peluquerias y barberias",              # 33. Turnos, servicios, precios
+    "empresas de limpieza",                 # 34. Cotización de servicios
+    "decoracion y diseño de interiores",    # 35. Consultas de proyecto, presupuestos
+    "opticas",                              # 36. Turnos, stock de lentes
+    "productoras audiovisuales",            # 37. Consultas de producción, presupuestos
+    "agencias de publicidad",               # 38. Captación de leads, servicios
+    "mueblerias",                           # 39. Consultas de productos, delivery
+    "joyerias",                             # 40. Alto ticket, consultas, encargos
+    "farmacias",                            # 41. Disponibilidad, turnos de vacunación
+    "floristerias",                         # 42. Pedidos, delivery, disponibilidad
+    "escuelas de musica y arte",            # 43. Inscripciones, horarios
+    "empresas de mudanzas",                 # 44. Cotizaciones, agendamiento
+    "laboratorios de analisis clinicos",    # 45. Turnos, preparación, resultados
 ]
 
-# =============================================================================
-# FUNCIONES AUXILIARES - HORARIO INTELIGENTE
-# =============================================================================
-
-def is_business_hours() -> bool:
-    """
-    Verifica si estamos en horario laboral (8 AM - 7 PM, hora Argentina).
-    
-    Railway corre en UTC, convertimos a Argentina (UTC-3).
-    
-    Returns:
-        True si estamos en horario laboral, False si no
-    """
-    utc_now = datetime.utcnow()
-    utc_hour = utc_now.hour
-    
-    # Convertir UTC a hora de Argentina (UTC-3)
-    argentina_hour = (utc_hour - 3) % 24
-    
-    # Verificar si estamos entre 8 AM y 7 PM (hora Argentina)
-    in_business_hours = BUSINESS_HOURS_START <= argentina_hour < BUSINESS_HOURS_END
-    
-    return in_business_hours
+# is_business_hours() imported from src.utils.timezone (handles DST correctly)
 
 # =============================================================================
 # LOGGER
@@ -263,8 +383,8 @@ log = logging.getLogger(__name__)
 # =============================================================================
 # Debe ir después de definir log para no provocar NameError al iniciar el worker
 try:
-    from cities_data import CIUDADES_POR_PAIS, PAISES, TOTAL_CIUDADES, TOTAL_PAISES
-    log.info(f"✅ Base de ciudades cargada: {TOTAL_PAISES} países, {TOTAL_CIUDADES} ciudades")
+    from cities_data import CIUDADES_POR_PAIS, PAISES, TOTAL_CIUDADES, TOTAL_PAISES, CITY_COORDINATES
+    log.info(f"✅ Base de ciudades cargada: {TOTAL_PAISES} países, {TOTAL_CIUDADES} ciudades, {len(CITY_COORDINATES)} con GPS")
 except ImportError:
     log.warning("⚠️  cities_data.py no encontrado, usando lista reducida")
     CIUDADES_POR_PAIS = {
@@ -275,235 +395,242 @@ except ImportError:
     PAISES = list(CIUDADES_POR_PAIS.keys())
     TOTAL_CIUDADES = sum(len(c) for c in CIUDADES_POR_PAIS.values())
     TOTAL_PAISES = len(PAISES)
+    CITY_COORDINATES = {}
 
 # =============================================================================
 # DOMAIN HUNTER WORKER
 # =============================================================================
 
 class DomainHunterWorker:
-    """Worker daemon que busca dominios en Google 24/7."""
+    """Worker daemon optimizado v8 que busca dominios en Google + Maps 24/7."""
     
     def __init__(self):
         """Inicializa el worker."""
+        if not SUPABASE_URL or not SUPABASE_KEY:
+            raise ValueError("SUPABASE_URL and SUPABASE_KEY must be set in environment variables")
         self.supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
         self.serpapi_key = SERPAPI_KEY
-        self.active_users = {}  # user_id -> config
-        self.search_pagination = {}  # (user_id, ciudad) -> página actual
+        self.active_users: Dict[str, dict] = {}
+        # v8: cache de dominios por usuario (evita cross-contamination entre usuarios)
+        self._user_domains_cache: Dict[str, Set[str]] = {}
+        # Resilience
+        self._error_streak = 0
+        # Credit management
+        self._searches_since_credit_check = 0
+        self._cached_credits_left: Optional[int] = None
+        # Daily credit tracking per user: {user_id: count}
+        self._daily_credits_used: Dict[str, int] = {}
+        self._daily_credits_date: Optional[str] = None
+        # Semaphore for parallel user processing
+        self._user_semaphore = asyncio.Semaphore(BotConfig.MAX_CONCURRENT_USERS)
+        # v8: cache de related searches (sugerencias gratuitas de Google)
+        self._related_queries_cache: List[str] = []
+        # v8: cache cross-user de resultados de búsqueda {query_hash: (domains, timestamp)}
+        self._search_results_cache: Dict[str, tuple] = {}
         
     async def start(self):
         """Inicia el worker daemon."""
-        log.info("\n" + "="*70)
-        log.info("🔍 DOMAIN HUNTER WORKER - Iniciando")
-        log.info("="*70 + "\n")
+        log.info("=" * 70)
+        log.info("🔍 DOMAIN HUNTER WORKER v8 - Iniciando")
+        log.info("=" * 70)
         
         if not self.serpapi_key:
-            log.error("❌ SERPAPI_KEY no configurada en .env")
-            log.error("   Consigue tu key gratis en: https://serpapi.com/")
+            log.error("❌ SERPAPI_KEY no configurada. Abortando.")
             return
         
-        log.info("✅ SerpAPI configurada")
-        log.info(f"✅ Supabase URL: {SUPABASE_URL[:30]}...")
+        # Fingerprint compacto
+        _bh = is_business_hours()
+        log.info(
+            f"🔖 v8 | {format_argentina_time()} | "
+            f"Horario: {BUSINESS_HOURS_START}-{BUSINESS_HOURS_END}h | "
+            f"{'ACTIVO' if _bh else 'PAUSADO'} | "
+            f"{TOTAL_PAISES} países, {TOTAL_CIUDADES} ciudades, {len(NICHOS)} nichos | "
+            f"Secuencia: {len(SEARCH_SEQUENCE)} búsquedas/combo (web+maps)"
+        )
         
-        # 🔖 FINGERPRINT DE VERSION - para confirmar qué código corre Railway
-        utc_now = datetime.utcnow()
-        utc_hour = utc_now.hour
-        argentina_hour = (utc_hour - 3) % 24
-        argentina_min = utc_now.minute
-        log.info(f"\n🔖 VERSION: horario_extended_v4 | HORARIO EXTENDIDO HASTA 21:00")
-        log.info(f"🕐 HORA ACTUAL: Argentina={argentina_hour:02d}:{argentina_min:02d} | UTC={utc_hour:02d}:{argentina_min:02d}")
-        log.info(f"🕐 HORARIO LABORAL: {BUSINESS_HOURS_START}:00 - {BUSINESS_HOURS_END}:00 (hora Argentina)")
-        log.info(f"🛡️ GUARDIA DOBLE: check en _main_loop() + check en _search_domains_for_user()")
-        _currently_business = is_business_hours()
-        log.info(f"📊 ESTADO ACTUAL: {'✅ DENTRO de horario laboral - buscando dominios' if _currently_business else '⏸️  FUERA de horario - SerpAPI PAUSADO, 0 creditos se gastaran'}")
-        
-        log.info(f"\n⏱️  Check de usuarios cada {CHECK_USERS_INTERVAL}s")
-        log.info(f"⏱️  Delay entre búsquedas: {MIN_DELAY_BETWEEN_SEARCHES}-{MAX_DELAY_BETWEEN_SEARCHES}s")
-        log.info(f"📦 Batch size: {DOMAIN_BATCH_SIZE} dominios")
-        log.info(f"🌍 Total países: {TOTAL_PAISES} | Total ciudades: {TOTAL_CIUDADES}")
-        log.info(f"🎯 Total nichos disponibles: {len(NICHOS)}\n")
-        
-        # =================================================================
-        # TEST DE CONECTIVIDAD AL INICIO
-        # =================================================================
-        log.info("="*70)
-        log.info("🧪 TEST DE CONECTIVIDAD - Verificando servicios...")
-        log.info("="*70)
-        
-        # Test 1: Supabase
-        try:
-            test_response = self.supabase.table("hunter_configs").select("user_id").limit(1).execute()
-            log.info(f"✅ SUPABASE: Conexión OK ({len(test_response.data)} registros de prueba)")
-        except Exception as e:
-            log.error(f"❌ SUPABASE: ERROR DE CONEXIÓN: {e}")
-            import traceback
-            log.error(f"   Traceback: {traceback.format_exc()}")
-            log.error("   El worker NO podrá funcionar sin Supabase. Abortando.")
+        # Test de conectividad
+        if not await self._test_connectivity():
             return
         
-        # Test 2: SerpAPI (búsqueda mínima para verificar que la API key funciona)
-        try:
-            test_params = {
-                "q": "test",
-                "num": 1,
-                "api_key": self.serpapi_key
-            }
-            test_search = GoogleSearch(test_params)
-            test_result = await asyncio.to_thread(test_search.get_dict)
-            search_info = test_result.get("search_information", {})
-            log.info(f"✅ SERPAPI: Conexión OK (query de prueba exitosa, {search_info.get('total_results', 'N/A')} resultados)")
-        except Exception as e:
-            log.error(f"❌ SERPAPI: ERROR DE CONEXIÓN: {e}")
-            import traceback
-            log.error(f"   Traceback: {traceback.format_exc()}")
-            log.error("   Verifica que SERPAPI_KEY sea válida y que haya créditos disponibles.")
-            log.error("   El worker NO podrá buscar dominios sin SerpAPI. Abortando.")
-            return
-        
-        log.info("="*70)
-        log.info("✅ TODOS LOS SERVICIOS CONECTADOS - Iniciando loop principal")
-        log.info("="*70 + "\n")
+        log.info("✅ Servicios conectados — iniciando loop principal")
         
         try:
             await self._main_loop()
         except KeyboardInterrupt:
-            log.info("\n\n⚠️  Detenido por el usuario")
+            log.info("⚠️  Detenido por el usuario")
         finally:
             log.info("✅ Worker cerrado correctamente")
     
-    async def _main_loop(self):
-        """Loop principal del worker."""
-        log.info("🚀 Entrando en loop principal del Domain Hunter Worker...\n")
+    async def _test_connectivity(self) -> bool:
+        """Verifica conectividad con Supabase y SerpAPI. Retorna True si OK."""
+        # Test Supabase
+        try:
+            test = self.supabase.table("hunter_configs").select("user_id").limit(1).execute()
+            log.info(f"✅ Supabase OK ({len(test.data)} registros)")
+        except Exception as e:
+            log.error(f"❌ Supabase ERROR: {e}")
+            return False
         
+        # Test SerpAPI (gratis via /account.json)
+        credits = await self._check_remaining_credits()
+        if credits is None:
+            log.error("❌ SerpAPI ERROR: no se pudo verificar la API key")
+            return False
+        
+        return True
+    
+    async def _check_remaining_credits(self) -> Optional[int]:
+        """Verifica créditos restantes de SerpAPI (gratis, no gasta créditos)."""
+        try:
+            url = f"https://serpapi.com/account.json?api_key={self.serpapi_key}"
+            req = urllib.request.Request(url)
+            data = await asyncio.to_thread(
+                lambda: urllib.request.urlopen(req, timeout=10).read()
+            )
+            info = json.loads(data.decode())
+            left = info.get("total_searches_left", 0)
+            plan = info.get("plan_name", "N/A")
+            used = info.get("this_month_usage", 0)
+            log.info(f"💰 SerpAPI: {left} restantes | Plan: {plan} | Usadas: {used}")
+            self._cached_credits_left = left
+            self._searches_since_credit_check = 0
+            return left
+        except Exception as e:
+            log.error(f"❌ Error verificando créditos SerpAPI: {e}")
+            return self._cached_credits_left
+    
+    def _get_sent_count(self) -> int:
+        """Total de emails ya enviados (status='sent'). Para límite warm-up."""
+        try:
+            response = self.supabase.table("leads")\
+                .select("id", count="exact")\
+                .eq("status", "sent")\
+                .execute()
+            return response.count or 0
+        except Exception as e:
+            log.error(f"❌ Error obteniendo sent_count: {e}")
+            return 0
+    
+    async def _main_loop(self):
+        """Loop principal del worker con procesamiento paralelo de usuarios."""
         while True:
             try:
-                # 1. Obtener usuarios con bot habilitado
-                log.info("=" * 70)
-                log.info("🔄 Nueva iteración del loop principal")
-                log.info("=" * 70)
-                
                 await self._update_active_users()
                 
                 if not self.active_users:
-                    log.warning("😴 No hay usuarios con bot habilitado. Esperando...")
-                    log.info(f"⏳ Esperando {CHECK_USERS_INTERVAL}s antes de revisar de nuevo...\n")
+                    log.info(f"😴 Sin usuarios activos. Revisando en {CHECK_USERS_INTERVAL}s")
                     await asyncio.sleep(CHECK_USERS_INTERVAL)
                     continue
                 
-                # 🕐 VERIFICAR HORARIO LABORAL (8 AM - 8 PM, hora Argentina)
-                utc_now = datetime.utcnow()
-                argentina_hour = (utc_now.hour - 3) % 24
-                argentina_min = utc_now.minute
-                
-                log.info(f"🕐 Hora actual: Argentina {argentina_hour:02d}:{argentina_min:02d} | UTC {utc_now.hour:02d}:{argentina_min:02d}")
-                
-                if not is_business_hours():
-                    log.warning(
-                        f"⏸️  FUERA DE HORARIO LABORAL (hora Argentina: {argentina_hour:02d}:{argentina_min:02d}). "
-                        f"Pausando búsquedas de dominios hasta las {BUSINESS_HOURS_START}:00 AM..."
+                # Límite warm-up: si ya se enviaron los emails máximos, no buscar más dominios
+                sent_count = self._get_sent_count()
+                if sent_count >= BotConfig.MAX_TOTAL_EMAILS_SENT:
+                    log.info(
+                        f"⏸️ Límite warm-up alcanzado ({sent_count}/{BotConfig.MAX_TOTAL_EMAILS_SENT} enviados). "
+                        "No se buscan más dominios."
                     )
-                    log.info(f"💰 Ahorrando créditos de SerpAPI. Revisando en {PAUSE_CHECK_INTERVAL}s...\n")
                     await asyncio.sleep(PAUSE_CHECK_INTERVAL)
                     continue
                 
-                log.info(f"✅ Dentro de horario laboral ({BUSINESS_HOURS_START}:00 - {BUSINESS_HOURS_END}:00). Buscando dominios...")
+                # Verificar horario laboral
+                if not is_business_hours(BUSINESS_HOURS_START, BUSINESS_HOURS_END):
+                    log.info(f"⏸️  Fuera de horario ({format_argentina_time()}). Pausa {PAUSE_CHECK_INTERVAL}s")
+                    await asyncio.sleep(PAUSE_CHECK_INTERVAL)
+                    continue
                 
-                # 2. Procesar cada usuario activo
-                log.info(f"📋 Procesando {len(self.active_users)} usuario(s)...\n")
+                # Pre-check de créditos periódico
+                if self._searches_since_credit_check >= BotConfig.CREDIT_CHECK_INTERVAL:
+                    credits = await self._check_remaining_credits()
+                    if credits is not None and credits < BotConfig.CREDIT_RESERVE_MIN:
+                        log.warning(f"⚠️  Solo {credits} créditos restantes. Pausando {BotConfig.CREDIT_PAUSE_SECONDS}s")
+                        await asyncio.sleep(BotConfig.CREDIT_PAUSE_SECONDS)
+                        continue
                 
-                for user_id, config in self.active_users.items():
-                    log.info(f"\n{'='*70}")
-                    log.info(f"🎯 Procesando usuario: {user_id[:8]}...")
-                    log.info(f"   Nicho: {config.get('nicho', 'N/A')}")
-                    log.info(f"   País: {config.get('pais', 'N/A')}")
-                    log.info(f"   Rotación automática: ACTIVADA")
-                    log.info(f"{'='*70}\n")
-                    
-                    # Buscar dominios para este usuario
-                    log.info("🔍 Iniciando búsqueda de dominios...")
-                    domains = await self._search_domains_for_user(user_id, config)
-                    
-                    if domains:
-                        log.info(f"\n✅ Encontrados {len(domains)} dominios válidos:")
-                        for i, domain in enumerate(domains[:5], 1):
-                            log.info(f"   {i}. {domain}")
-                        if len(domains) > 5:
-                            log.info(f"   ... y {len(domains) - 5} más\n")
-                        
-                        # Guardar dominios en Supabase
-                        log.info(f"💾 Guardando {len(domains)} dominios en Supabase...")
-                        await self._save_domains_to_supabase(user_id, domains)
-                        
-                        # Log de progreso
-                        await self._log_to_user(
-                            user_id=user_id,
-                            level="success",
-                            action="domain_added",
-                            domain="system",
-                            message=f"✅ {len(domains)} dominios nuevos agregados a la cola"
-                        )
-                        log.info(f"✅ Dominios guardados correctamente\n")
-                    else:
-                        log.warning(f"⚠️  No se encontraron dominios válidos en esta búsqueda\n")
-                    
-                    # Delay antes de procesar el siguiente usuario
-                    delay = random.randint(5, 15)
-                    log.info(f"⏳ Esperando {delay}s antes del siguiente usuario...\n")
-                    await asyncio.sleep(delay)
+                # Resetear daily credits si cambió el día
+                today = utc_now().strftime("%Y-%m-%d")
+                if self._daily_credits_date != today:
+                    self._daily_credits_used.clear()
+                    self._daily_credits_date = today
                 
-                # 3. Delay antes de la siguiente ronda
+                log.info(f"🔄 Procesando {len(self.active_users)} usuario(s) | {format_argentina_time()}")
+                
+                # Procesar usuarios en paralelo con semáforo
+                tasks = [
+                    self._process_user_safe(uid, cfg)
+                    for uid, cfg in self.active_users.items()
+                ]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                
+                # Log de errores de tareas fallidas
+                for uid, result in zip(self.active_users.keys(), results):
+                    if isinstance(result, Exception):
+                        log.error(f"❌ Error procesando {uid[:8]}: {result}")
+                
+                self._error_streak = 0
                 await asyncio.sleep(CHECK_USERS_INTERVAL)
                 
             except Exception as e:
-                log.error(f"❌ Error en loop principal: {e}")
-                await asyncio.sleep(30)
+                self._error_streak += 1
+                backoff = min(BotConfig.ERROR_BACKOFF_BASE * (2 ** min(self._error_streak, 5)),
+                              BotConfig.ERROR_BACKOFF_MAX)
+                log.error(f"❌ Error en loop (streak {self._error_streak}): {e}")
+                await asyncio.sleep(backoff)
+    
+    async def _process_user_safe(self, user_id: str, config: dict):
+        """Procesa un usuario con semáforo y control de budget."""
+        async with self._user_semaphore:
+            # Check daily credit budget
+            daily_limit = config.get('daily_credit_limit', BotConfig.DEFAULT_DAILY_CREDIT_LIMIT)
+            used_today = self._daily_credits_used.get(user_id, 0)
+            if used_today >= daily_limit:
+                log.info(f"[{user_id[:8]}] Budget diario agotado ({used_today}/{daily_limit})")
+                return
+            
+            domains = await self._search_domains_for_user(user_id, config)
+            
+            if domains:
+                await self._save_domains_to_supabase(user_id, domains)
+                await self._log_to_user(
+                    user_id=user_id, level="success", action="domain_added",
+                    domain="system",
+                    message=f"✅ {len(domains)} dominios nuevos agregados a la cola"
+                )
+                # Track credit usage
+                self._daily_credits_used[user_id] = used_today + 1
+                self._searches_since_credit_check += 1
+                
+                delay = random.randint(MIN_DELAY_BETWEEN_SEARCHES, MAX_DELAY_BETWEEN_SEARCHES)
+                await asyncio.sleep(delay)
     
     async def _update_active_users(self):
         """Obtiene usuarios con bot habilitado desde Supabase."""
         try:
-            log.info("🔍 Consultando Supabase por usuarios con bot_enabled=true...")
-            
             response = self.supabase.table("hunter_configs")\
                 .select("*")\
                 .eq("bot_enabled", True)\
                 .execute()
             
-            log.info(f"📡 Respuesta de Supabase: {len(response.data)} registros encontrados")
-            
-            # Actualizar diccionario de usuarios activos
-            self.active_users = {
-                config['user_id']: config 
-                for config in response.data
-            }
+            self.active_users = {c['user_id']: c for c in response.data}
             
             if self.active_users:
-                log.info(f"✅ {len(self.active_users)} usuario(s) con bot activo:")
-                for user_id, config in self.active_users.items():
-                    log.info(f"   - Usuario: {user_id[:8]}... | Nicho: {config.get('nicho', 'N/A')} | País: {config.get('pais', 'N/A')}")
-            else:
-                log.warning("⚠️  No se encontraron usuarios con bot_enabled=true")
-            
+                users_summary = ", ".join(
+                    f"{uid[:8]}({c.get('nicho', '?')})"
+                    for uid, c in self.active_users.items()
+                )
+                log.info(f"👥 {len(self.active_users)} activo(s): {users_summary}")
         except Exception as e:
             log.error(f"❌ Error obteniendo usuarios: {e}")
-            import traceback
-            log.error(f"   Traceback: {traceback.format_exc()}")
     
     async def _search_domains_for_user(self, user_id: str, config: dict) -> List[str]:
         """
-        Busca dominios usando ROTACIÓN INTELIGENTE de nichos, ciudades y países.
-        Ya no usa la config del usuario (nicho, ciudades, pais) - es 100% automático.
+        Busca dominios con alternancia Web/Maps y extracción multi-source v7.
         
-        Args:
-            user_id: ID del usuario
-            config: Configuración del usuario (ignorada, se usa rotación automática)
-        
-        Returns:
-            Lista de dominios encontrados (hasta DOMAIN_BATCH_SIZE)
+        Secuencia por combinación (cada paso = 1 crédito):
+        - Páginas pares: Web search con template diferente
+        - Páginas impares: Google Maps search (20+ negocios/crédito)
         """
-        # 1. Obtener o crear tracking para este usuario
         tracking = await self._get_next_combination_to_search(user_id)
-        
         if not tracking:
-            log.warning(f"⚠️  Usuario {user_id[:8]}... no tiene más combinaciones para buscar")
             return []
         
         nicho = tracking['nicho']
@@ -511,244 +638,495 @@ class DomainHunterWorker:
         pais = tracking['pais']
         current_page = tracking['current_page']
         
-        # Mejorar query para obtener resultados más específicos
-        # Alternamos entre diferentes tipos de queries para obtener más variedad
-        query_modifiers = [
-            f"{nicho} en {ciudad}",  # Búsqueda básica
-            f"{nicho} {ciudad} contacto",  # Con contacto
-            f"{nicho} profesionales {ciudad}",  # Profesionales
-            f"empresas de {nicho} {ciudad}",  # Empresas de...
-        ]
+        # Determinar tipo de búsqueda según la secuencia v8 (tipo, template, start)
+        seq_idx = current_page % len(SEARCH_SEQUENCE)
+        search_type, template_idx, start_offset = SEARCH_SEQUENCE[seq_idx]
         
-        # Rotar el modificador según la página actual
-        query_index = current_page % len(query_modifiers)
-        query = query_modifiers[query_index]
+        # Guardia final de horario
+        if not is_business_hours(BUSINESS_HOURS_START, BUSINESS_HOURS_END):
+            log.info(f"🛡️ Guardia final: fuera de horario. No se gastará crédito.")
+            return []
         
-        start_result = current_page * 10  # SerpAPI paginación
-        
-        log.info(f"🎯 Rotación: {nicho} | {ciudad}, {pais} | Página {current_page + 1}")
-        log.info(f"🔍 Query SerpAPI: \"{query}\"")
+        gl_code = PAIS_GL_CODE.get(pais, pais[:2].lower())
         
         try:
-            # 🛡️ GUARDIA FINAL: verificar horario JUSTO antes de gastar crédito
-            if not is_business_hours():
-                utc_now = datetime.utcnow()
-                argentina_hour = (utc_now.hour - 3) % 24
-                log.warning(
-                    f"🛡️ GUARDIA FINAL: Bloqueando llamada a SerpAPI fuera de horario "
-                    f"(hora Argentina: {argentina_hour:02d}:00). No se gastará crédito."
+            if search_type == "maps":
+                domains_found = await self._search_via_maps(
+                    nicho, ciudad, pais, gl_code, template_idx, start_offset
                 )
-                return []
+                log.info(
+                    f"[{user_id[:8]}] 🗺️  Maps T{template_idx} S{start_offset} | {nicho} | {ciudad},{pais} | "
+                    f"P{current_page} | {len(domains_found)} dominios"
+                )
+            else:
+                domains_found = await self._search_via_web(
+                    nicho, ciudad, pais, gl_code, template_idx, start_offset
+                )
+                log.info(
+                    f"[{user_id[:8]}] 🌐 Web T{template_idx} S{start_offset} | {nicho} | {ciudad},{pais} | "
+                    f"P{current_page} | {len(domains_found)} dominios"
+                )
             
-            # Configurar búsqueda con SerpAPI
-            params = {
-                "q": query,
-                "location": f"{ciudad}, {pais}",
-                "hl": "es",
-                "gl": pais[:2].lower(),  # Código de país (ej: ar, mx, co)
-                "num": 20,
-                "start": start_result,
-                "api_key": self.serpapi_key
-            }
+            # v8: cache per-user para evaluar % nuevos sin cross-contamination
+            user_cache = self._user_domains_cache.setdefault(user_id, set())
+            truly_new = domains_found - user_cache
+            new_ratio = len(truly_new) / len(domains_found) if domains_found else 0
             
-            # 💰 Log de auditoría: registrar hora exacta de cada búsqueda SerpAPI
-            utc_now = datetime.utcnow()
-            argentina_hour = (utc_now.hour - 3) % 24
-            argentina_min = utc_now.minute
+            user_cache.update(domains_found)
+            if len(user_cache) > BotConfig.SESSION_CACHE_MAX_SIZE:
+                # Mantener solo los últimos encontrados
+                user_cache.clear()
+                user_cache.update(domains_found)
+            
             log.info(
-                f"💰 SERPAPI CALL: hora Argentina {argentina_hour:02d}:{argentina_min:02d} | "
-                f"UTC {utc_now.hour:02d}:{argentina_min:02d} | Query: \"{query}\""
+                f"[{user_id[:8]}] 📈 {len(truly_new)}/{len(domains_found)} nuevos ({new_ratio:.0%}) | "
+                f"Cache[{user_id[:8]}]: {len(user_cache)}"
             )
             
-            # Ejecutar búsqueda (separar objeto de método para evitar garbage collection)
-            search_obj = GoogleSearch(params)
-            search = await asyncio.to_thread(search_obj.get_dict)
-            organic_results = search.get("organic_results", [])
+            # Lógica de agotamiento inteligente
+            await self._handle_pagination_logic(
+                user_id, nicho, ciudad, pais, current_page,
+                len(domains_found), new_ratio, seq_idx
+            )
             
-            log.info(f"📊 SerpAPI devolvió {len(organic_results)} resultados")
-            
-            domains_found = set()
-            
-            for result in organic_results:
-                link = result.get("link")
-                if not link:
-                    continue
-                
-                domain = self._extract_domain(link)
-                if domain and self._is_valid_domain(domain):
-                    domains_found.add(domain)
-                    log.info(f"  ✅ {domain}")
-                    
-                    if len(domains_found) >= DOMAIN_BATCH_SIZE:
-                        break
-            
-            # 2. Actualizar tracking según resultados
-            if len(domains_found) == 0:
-                # 🎯 ESTRATEGIA MÁS PACIENTE: No marcar como agotada inmediatamente
-                # Solo después de múltiples intentos sin resultados
-                if current_page >= 2:
-                    # Ya buscamos en páginas 0, 1, 2 sin resultados → realmente agotada
-                    await self._mark_combination_exhausted(user_id, nicho, ciudad, pais)
-                    log.info(f"🏁 Combinación agotada (0 resultados en 3 intentos). Rotando a siguiente...")
-                else:
-                    # Primer o segundo intento → dar otra chance
-                    await self._increment_page(user_id, nicho, ciudad, pais, 0)
-                    log.info(f"⚠️  0 resultados (intento {current_page + 1}/3), continuando...")
-            else:
-                # ✅ Hay resultados - incrementar página para próxima búsqueda
-                await self._increment_page(user_id, nicho, ciudad, pais, len(domains_found))
-                log.info(f"📄 Próxima búsqueda: página {current_page + 2}")
-            
-            # Delay antes de la siguiente búsqueda
-            delay = random.randint(MIN_DELAY_BETWEEN_SEARCHES, MAX_DELAY_BETWEEN_SEARCHES)
-            log.info(f"⏳ Delay: {delay}s")
-            await asyncio.sleep(delay)
-            
-            return list(domains_found)
+            # v8: retornar solo dominios nuevos (reduce tráfico de red al upsert)
+            return list(truly_new) if truly_new else list(domains_found)
             
         except Exception as e:
-            import traceback
-            log.error(f"❌ Error en búsqueda SerpAPI: {e}")
-            log.error(f"   Traceback completo: {traceback.format_exc()}")
+            log.error(f"[{user_id[:8]}] ❌ Error búsqueda: {e}")
+            log.error(traceback.format_exc())
             return []
     
-    def _extract_domain_from_search_link(self, href: str) -> str | None:
-        """
-        Extrae el dominio real de un link de resultados de búsqueda.
-        
-        DuckDuckGo usa links directos, no como Google que wrappea.
-        """
-        if not href:
-            return None
-        
-        # DuckDuckGo puede tener links tipo //duckduckgo.com/l/?uddg=...
-        # En ese caso, extraer el parámetro uddg
-        if 'duckduckgo.com/l/' in href:
-            try:
-                parsed = urlparse(href if href.startswith('http') else f'https:{href}')
-                params = parse_qs(parsed.query)
-                if 'uddg' in params:
-                    actual_url = params['uddg'][0]
-                    return self._extract_domain(actual_url)
-            except:
-                pass
-        
-        # Si es un link directo
-        return self._extract_domain(href)
+    # =============================================================================
+    # v8: CACHE CROSS-USER — Reusar resultados de queries recientes
+    # Si otro usuario (o el mismo) ya hizo la misma query en las últimas 24h,
+    # reusar los dominios encontrados sin gastar otro crédito.
+    # =============================================================================
     
-    def _extract_domain(self, url: str) -> str | None:
+    _CACHE_TTL_SECONDS = 86400  # 24 horas
+    _CACHE_MAX_ENTRIES = 1000
+    
+    def _cache_key(self, search_type: str, query: str, start: int) -> str:
+        """Genera key de cache determinístico para una query."""
+        raw = f"{search_type}:{query}:{start}"
+        return hashlib.md5(raw.encode()).hexdigest()
+    
+    def _cache_get(self, key: str) -> Optional[Set[str]]:
+        """Busca en cache cross-user. Retorna dominios si hay hit válido."""
+        entry = self._search_results_cache.get(key)
+        if entry is None:
+            return None
+        domains, ts = entry
+        if time.time() - ts > self._CACHE_TTL_SECONDS:
+            del self._search_results_cache[key]
+            return None
+        return domains
+    
+    def _cache_put(self, key: str, domains: Set[str]) -> None:
+        """Almacena resultados en cache cross-user."""
+        # Limpiar entradas viejas si el cache está lleno
+        if len(self._search_results_cache) >= self._CACHE_MAX_ENTRIES:
+            now = time.time()
+            expired = [k for k, (_, ts) in self._search_results_cache.items()
+                       if now - ts > self._CACHE_TTL_SECONDS]
+            for k in expired:
+                del self._search_results_cache[k]
+            # Si aún está lleno, eliminar el 25% más viejo
+            if len(self._search_results_cache) >= self._CACHE_MAX_ENTRIES:
+                sorted_keys = sorted(self._search_results_cache.keys(),
+                                     key=lambda k: self._search_results_cache[k][1])
+                for k in sorted_keys[:len(sorted_keys) // 4]:
+                    del self._search_results_cache[k]
+        
+        self._search_results_cache[key] = (domains, time.time())
+
+    async def _search_via_web(self, nicho: str, ciudad: str, pais: str,
+                              gl_code: str, template_idx: int,
+                              start: int = 0) -> Set[str]:
+        """Búsqueda web con extracción multi-source de 7 fuentes.
+        
+        v8: query limpia sin -site: exclusions (filtrado post-extraction),
+        num=10 (valor real de Google), soporte de paginación con start,
+        cache cross-user para evitar gastar créditos en queries repetidas.
+        """
+        template = QUERY_TEMPLATES_WEB[template_idx % len(QUERY_TEMPLATES_WEB)]
+        query = template.format(nicho=nicho, ciudad=ciudad)
+        
+        # v8: verificar cache cross-user antes de gastar crédito
+        cache_key = self._cache_key("web", query, start)
+        cached = self._cache_get(cache_key)
+        if cached is not None:
+            log.info(f"  💾 Cache hit web: {len(cached)} dominios (0 créditos)")
+            return cached
+        
+        params = {
+            "q": query,
+            "location": f"{ciudad}, {pais}",
+            "hl": "es",
+            "gl": gl_code,
+            "num": 10,
+            "start": start,
+            "filter": 0,
+            "nfpr": 1,
+            "api_key": self.serpapi_key
+        }
+        
+        search_obj = GoogleSearch(params)
+        try:
+            search = await asyncio.wait_for(
+                asyncio.to_thread(search_obj.get_dict),
+                timeout=BotConfig.SERPAPI_TIMEOUT
+            )
+        except asyncio.TimeoutError:
+            log.error(f"❌ SerpAPI timeout ({BotConfig.SERPAPI_TIMEOUT}s)")
+            return set()
+        
+        domains = self._extract_domains_from_web_response(search)
+        
+        # v8: almacenar en cache cross-user
+        if domains:
+            self._cache_put(cache_key, domains)
+        
+        # v8: extraer related_searches como sugerencias gratuitas (ya vienen en la respuesta)
+        self._harvest_related_searches(search)
+        
+        return domains
+    
+    async def _search_via_maps(self, nicho: str, ciudad: str, pais: str,
+                               gl_code: str, template_idx: int,
+                               start: int = 0) -> Set[str]:
+        """Búsqueda en Google Maps — devuelve 20+ negocios con website directo.
+        
+        v8: soporte de paginación extendida (start=0/20/40/60) para extraer
+        hasta 80 negocios por query. Cache cross-user incluido.
+        """
+        template = QUERY_TEMPLATES_MAPS[template_idx % len(QUERY_TEMPLATES_MAPS)]
+        query = template.format(nicho=nicho, ciudad=ciudad)
+        
+        # v8: verificar cache cross-user antes de gastar crédito
+        cache_key = self._cache_key("maps", query, start)
+        cached = self._cache_get(cache_key)
+        if cached is not None:
+            log.info(f"  💾 Cache hit maps: {len(cached)} dominios (0 créditos)")
+            return cached
+        
+        # Construir parámetros de Maps
+        params = {
+            "engine": "google_maps",
+            "q": query,
+            "hl": "es",
+            "type": "search",
+            "api_key": self.serpapi_key
+        }
+        
+        # Usar coordenadas GPS si disponibles, sino location text
+        coords = CITY_COORDINATES.get(ciudad)
+        if coords:
+            params["ll"] = f"@{coords},14z"
+        else:
+            params["ll"] = None  # Dejar que SerpAPI geocodifique
+            params["location"] = f"{ciudad}, {pais}"
+        
+        # Limpiar None values
+        params = {k: v for k, v in params.items() if v is not None}
+        
+        # v8: paginación controlada desde SEARCH_SEQUENCE
+        if start > 0:
+            params["start"] = start
+        
+        search_obj = GoogleSearch(params)
+        try:
+            search = await asyncio.wait_for(
+                asyncio.to_thread(search_obj.get_dict),
+                timeout=BotConfig.SERPAPI_TIMEOUT
+            )
+        except asyncio.TimeoutError:
+            log.error(f"❌ Maps timeout ({BotConfig.SERPAPI_TIMEOUT}s)")
+            return set()
+        
+        domains = self._extract_domains_from_maps_response(search)
+        
+        # v8: almacenar en cache cross-user
+        if domains:
+            self._cache_put(cache_key, domains)
+        
+        return domains
+    
+    def _extract_domains_from_web_response(self, search: dict) -> Set[str]:
+        """Extrae dominios de 7 fuentes en una respuesta web de SerpAPI."""
+        domains = set()
+        counts = {"organic": 0, "local": 0, "kg": 0, "related": 0, "ads": 0, "places": 0, "sitelinks": 0}
+        
+        # SOURCE 1: Resultados orgánicos
+        for result in search.get("organic_results", []):
+            link = result.get("link")
+            if link:
+                d = self._extract_domain(link)
+                if d and self._is_valid_domain(d):
+                    domains.add(d)
+                    counts["organic"] += 1
+            
+            # Sitelinks (inline + expanded)
+            sitelinks = result.get("sitelinks", {})
+            for group in [sitelinks.get("inline", []), sitelinks.get("expanded", [])]:
+                for sl in group:
+                    sl_link = sl.get("link")
+                    if sl_link:
+                        d = self._extract_domain(sl_link)
+                        if d and self._is_valid_domain(d):
+                            domains.add(d)
+                            counts["sitelinks"] += 1
+        
+        # SOURCE 2: Local Results (Google Maps pack)
+        for local in search.get("local_results", []):
+            website = local.get("website")
+            if website:
+                d = self._extract_domain(website)
+                if d and self._is_valid_domain(d):
+                    domains.add(d)
+                    counts["local"] += 1
+        
+        # SOURCE 3: Knowledge Graph
+        kg = search.get("knowledge_graph", {})
+        kg_web = kg.get("website")
+        if kg_web:
+            d = self._extract_domain(kg_web)
+            if d and self._is_valid_domain(d):
+                domains.add(d)
+                counts["kg"] += 1
+        
+        # SOURCE 4: Related Results
+        for rel in search.get("related_results", []):
+            r_link = rel.get("link")
+            if r_link:
+                d = self._extract_domain(r_link)
+                if d and self._is_valid_domain(d):
+                    domains.add(d)
+                    counts["related"] += 1
+        
+        # SOURCE 5: Ads (anuncios pagados = negocios REALES con presupuesto)
+        for ad in search.get("ads", []):
+            ad_link = ad.get("link") or ad.get("tracking_link", "")
+            if ad_link:
+                d = self._extract_domain(ad_link)
+                if d and self._is_valid_domain(d):
+                    domains.add(d)
+                    counts["ads"] += 1
+        
+        # SOURCE 6: Places Results (Maps embebido en web search)
+        for place in search.get("places_results", []):
+            p_link = place.get("website") or place.get("link", "")
+            if p_link:
+                d = self._extract_domain(p_link)
+                if d and self._is_valid_domain(d):
+                    domains.add(d)
+                    counts["places"] += 1
+        
+        # SOURCE 7: Inline Local Results (variante de local pack)
+        inline_local = search.get("local_results", {})
+        if isinstance(inline_local, dict):
+            for place in inline_local.get("places", []):
+                p_link = place.get("website") or place.get("link", "")
+                if p_link:
+                    d = self._extract_domain(p_link)
+                    if d and self._is_valid_domain(d):
+                        domains.add(d)
+                        counts["local"] += 1
+        
+        active_sources = {k: v for k, v in counts.items() if v > 0}
+        log.info(f"  📊 Web extraction: {active_sources} = {len(domains)} únicos")
+        
+        return domains
+    
+    def _extract_domains_from_maps_response(self, search: dict) -> Set[str]:
+        """Extrae dominios de respuesta de Google Maps API."""
+        domains = set()
+        total = 0
+        
+        for result in search.get("local_results", []):
+            website = result.get("website")
+            if website:
+                d = self._extract_domain(website)
+                if d and self._is_valid_domain(d):
+                    domains.add(d)
+                    total += 1
+        
+        log.info(f"  🗺️  Maps extraction: {total} con website → {len(domains)} únicos válidos")
+        return domains
+    
+    def _harvest_related_searches(self, search: dict) -> None:
+        """Extrae related_searches de la respuesta de SerpAPI.
+        
+        v8: Las related_searches vienen gratis en cada respuesta web de Google.
+        Se almacenan para potencial uso futuro como queries adicionales.
+        No gastan créditos extras — es información gratuita.
+        """
+        related = search.get("related_searches", [])
+        if not related:
+            return
+        
+        queries = []
+        for item in related:
+            query_text = item.get("query")
+            if query_text:
+                queries.append(query_text)
+        
+        if queries:
+            # Almacenar en cache de sugerencias (limitado para no explotar memoria)
+            if not hasattr(self, '_related_queries_cache'):
+                self._related_queries_cache: List[str] = []
+            
+            new_queries = [q for q in queries if q not in self._related_queries_cache]
+            self._related_queries_cache.extend(new_queries)
+            
+            # Limitar a 500 sugerencias en memoria
+            if len(self._related_queries_cache) > 500:
+                self._related_queries_cache = self._related_queries_cache[-250:]
+            
+            if new_queries:
+                log.info(f"  🔗 +{len(new_queries)} related searches capturadas (total: {len(self._related_queries_cache)})")
+
+    async def _handle_pagination_logic(self, user_id: str, nicho: str, ciudad: str,
+                                        pais: str, current_page: int,
+                                        domains_count: int, new_ratio: float,
+                                        seq_idx: int):
+        """Lógica de agotamiento inteligente unificada."""
+        if domains_count == 0:
+            if current_page < MAX_PAGES_PER_COMBINATION - 1:
+                await self._increment_page(user_id, nicho, ciudad, pais, 0)
+            else:
+                await self._mark_combination_exhausted(user_id, nicho, ciudad, pais)
+        elif current_page >= MAX_PAGES_PER_COMBINATION - 1:
+            await self._mark_combination_exhausted(user_id, nicho, ciudad, pais)
+        elif new_ratio < MIN_NEW_RATIO_FOR_PAGINATION and current_page >= 2:
+            await self._mark_combination_exhausted(user_id, nicho, ciudad, pais)
+            log.info(f"[{user_id[:8]}] 🏁 Rendimiento bajo ({new_ratio:.0%}), rotando combinación")
+        else:
+            await self._increment_page(user_id, nicho, ciudad, pais, domains_count)
+    
+    def _extract_domain(self, url: str) -> Optional[str]:
         """Extrae el dominio base de una URL."""
         try:
             parsed = urlparse(url)
             domain = parsed.netloc or parsed.path
-            
-            # Limpiar
             domain = domain.lower().strip()
             if domain.startswith('www.'):
                 domain = domain[4:]
-            
-            # Quitar puerto si existe
             if ':' in domain:
                 domain = domain.split(':')[0]
-            
             return domain if domain else None
-        except:
+        except Exception:
             return None
     
     def _is_valid_domain(self, domain: str) -> bool:
-        """Verifica si un dominio es válido y no está en blacklist (mejorado)."""
+        """
+        Valida dominio de negocio real. Blacklist O(1) optimizada v7.
+        
+        Pipeline: formato → blacklist (O(1)) → TLD → plataformas → spam → directorios
+        """
         if not domain or len(domain) < 4:
             return False
         
-        # Convertir a minúsculas para comparación
-        domain_lower = domain.lower()
+        domain_lower = domain.lower().strip()
         
-        # 1. Filtrar links de Google Maps y rutas
+        # ── 1. FORMATO BÁSICO ──────────────────────────────────────────────
         if domain_lower.startswith('/') or '/maps/' in domain_lower:
             return False
         
-        # 2. Filtrar dominios con caracteres raros o mal formados
-        if any(char in domain for char in ['[', ']', '{', '}', '|', '\\', ' ', '%']):
+        # v8: usa constante de módulo (antes se creaba frozenset en cada llamada)
+        if INVALID_DOMAIN_CHARS & set(domain):
             return False
         
-        # 3. Verificar que tenga al menos un punto (TLD)
-        if '.' not in domain:
+        if '.' not in domain_lower or '@' in domain_lower:
             return False
         
-        # 4. Filtrar dominios de ejemplo/prueba
-        if any(word in domain_lower for word in ['ejemplo', 'example', 'test', 'demo', 'sample']):
+        parts = domain_lower.split('.')
+        if len(parts) < 2 or len(parts) > 4:
             return False
         
-        # 5. Verificar blacklist principal
-        for blacklisted in BLACKLIST_DOMAINS:
-            if blacklisted in domain_lower:
+        name_part = parts[0]
+        if len(name_part) < 3:
+            return False
+        
+        # ── 2. BLACKLIST O(1) ──────────────────────────────────────────────
+        
+        # Ejemplo/prueba fast check (v8: usa constante de módulo)
+        if any(w in domain_lower for w in EXAMPLE_DOMAIN_WORDS):
+            return False
+        
+        # Suffix blacklist: O(|BLACKLIST_SUFFIXES|) pero set is small and endswith is fast
+        for suffix in BLACKLIST_SUFFIXES:
+            if domain_lower.endswith(suffix) or domain_lower.endswith('.' + suffix):
                 return False
         
-        # 6. Verificar extensiones gubernamentales
+        # Name part blacklist: O(1) set intersection
+        name_tokens = set(name_part.split('-'))
+        name_tokens.add(name_part)  # Also check full name
+        if BLACKLIST_NAME_PARTS & name_tokens:
+            return False
+        
+        # Extensiones gubernamentales
         for gov_tld in GOVERNMENT_TLD:
             if gov_tld in domain_lower:
                 return False
         
-        # 7. Filtrar dominios que son solo números o muy genéricos
-        parts = domain_lower.split('.')
-        if len(parts) < 2:
+        # ── 3. TLD VÁLIDO ──────────────────────────────────────────────────
+        if not any(domain_lower.endswith(tld) for tld in VALID_BUSINESS_TLDS):
             return False
         
-        # El nombre debe tener al menos 3 caracteres (ej: abc.com es válido, ab.com no)
-        if len(parts[0]) < 3:
+        # ── 4. PLATAFORMAS GRATUITAS ───────────────────────────────────────
+        for suffix in FREE_PLATFORM_SUFFIXES:
+            if domain_lower.endswith(suffix):
+                return False
+        
+        # ── 5. DETECCIÓN DE SPAM ───────────────────────────────────────────
+        if len(domain_lower) > 60 or len(name_part) > 30:
             return False
         
-        # 8. Filtrar portales muy conocidos por TLD
-        if domain_lower.endswith(('.blogspot.com', '.wordpress.com', '.wix.com', 
-                                   '.weebly.com', '.tumblr.com', '.github.io')):
+        if name_part.count('-') > 3:
             return False
         
-        # 9. Verificar que no sea email (algunos scrapers capturan mal)
-        if '@' in domain:
+        if name_part.startswith('-') or name_part.endswith('-'):
             return False
+        
+        name_clean = name_part.replace('-', '')
+        if name_clean.isdigit():
+            return False
+        
+        digit_count = sum(1 for c in name_part if c.isdigit())
+        if len(name_part) > 5 and digit_count / len(name_part) > 0.5:
+            return False
+        
+        # ── 6. DIRECTORIOS / AGREGADORES (v8: usa constante de módulo) ─────
+        for pattern in DIRECTORY_PATTERNS:
+            if pattern in name_part:
+                return False
         
         return True
     
     async def _save_domains_to_supabase(self, user_id: str, domains: List[str]):
-        """Guarda dominios NUEVOS en la tabla leads del usuario.
-        
-        Usamos ignore_duplicates=True para que solo se inserten dominios que
-        no existan (user_id, domain). Así no re-encolamos dominios ya enviados
-        o fallidos, y PEND refleja solo los realmente nuevos en cola.
-        """
+        """Guarda dominios nuevos en la tabla leads (upsert con ignore_duplicates)."""
         try:
             leads_data = [
-                {
-                    'user_id': user_id,
-                    'domain': domain,
-                    'status': 'pending',
-                }
+                {'user_id': user_id, 'domain': domain, 'status': 'pending'}
                 for domain in domains
             ]
-            
-            # Solo insertar si no existe (no sobrescribir enviados/fallidos)
             self.supabase.table("leads").upsert(
                 leads_data,
                 on_conflict='user_id,domain',
                 ignore_duplicates=True,
             ).execute()
-            
-            log.info(f"💾 {len(domains)} dominios ofrecidos a la cola (solo nuevos se insertan)")
-            
+            log.info(f"[{user_id[:8]}] 💾 {len(domains)} dominios → cola")
         except Exception as e:
-            log.error(f"❌ Error guardando dominios: {e}")
+            log.error(f"[{user_id[:8]}] ❌ Error guardando: {e}")
     
     # =============================================================================
-    # MÉTODOS DE TRACKING - Sistema de Rotación Inteligente
+    # TRACKING - Rotación Inteligente con increment simplificado
     # =============================================================================
     
-    async def _get_next_combination_to_search(self, user_id: str) -> dict | None:
-        """
-        Obtiene la próxima combinación (nicho, ciudad, país) a buscar.
-        Prioriza combinaciones no agotadas. Si todas están agotadas, resetea.
-        """
+    async def _get_next_combination_to_search(self, user_id: str) -> Optional[dict]:
+        """Obtiene la próxima combinación no agotada. Resetea si todas agotadas."""
         try:
-            # Buscar combinación no agotada con menor página (para "exprimir" cada una)
             response = self.supabase.table("domain_search_tracking")\
                 .select("*")\
                 .eq("user_id", user_id)\
@@ -760,11 +1138,9 @@ class DomainHunterWorker:
             if response.data:
                 return response.data[0]
             
-            # Si todas están agotadas, resetear y empezar de nuevo
-            log.info(f"🔄 Todas las combinaciones agotadas para {user_id[:8]}. Reseteando...")
+            log.info(f"[{user_id[:8]}] 🔄 Todas agotadas, reseteando...")
             await self._reset_all_combinations(user_id)
             
-            # Intentar de nuevo después del reset
             response = self.supabase.table("domain_search_tracking")\
                 .select("*")\
                 .eq("user_id", user_id)\
@@ -776,217 +1152,192 @@ class DomainHunterWorker:
             if response.data:
                 return response.data[0]
             
-            # Si aún no hay, crear la primera combinación
             return await self._create_first_combination(user_id)
-            
         except Exception as e:
-            log.error(f"❌ Error obteniendo próxima combinación: {e}")
+            log.error(f"[{user_id[:8]}] ❌ Error obteniendo combinación: {e}")
             return None
 
-    async def _create_first_combination(self, user_id: str) -> dict | None:
-        """Crea la primera combinación para un usuario nuevo."""
+    def _get_user_search_params(self, user_id: str) -> tuple:
+        """Obtiene nicho/pais/ciudades del config del usuario, fallback a globales.
+        
+        v8: Respeta la configuración del usuario en hunter_configs.
+        Si el usuario configuró nicho/pais/ciudades, se usan esos valores.
+        Si no, se usan los valores globales (NICHOS, PAISES, CIUDADES_POR_PAIS).
+        """
+        config = self.active_users.get(user_id, {})
+        
+        # Nicho: usar el del usuario si existe, sino aleatorio global
+        user_nicho = config.get('nicho')
+        nichos_pool = [user_nicho] if user_nicho else NICHOS
+        
+        # País: usar el del usuario si existe, sino aleatorio global
+        user_pais = config.get('pais')
+        paises_pool = [user_pais] if user_pais else PAISES
+        
+        # Ciudades: usar las del usuario si existen (puede ser lista o string CSV)
+        user_ciudades = config.get('ciudades')
+        if user_ciudades:
+            if isinstance(user_ciudades, str):
+                ciudades_list = [c.strip() for c in user_ciudades.split(',') if c.strip()]
+            elif isinstance(user_ciudades, list):
+                ciudades_list = user_ciudades
+            else:
+                ciudades_list = None
+        else:
+            ciudades_list = None
+        
+        return nichos_pool, paises_pool, ciudades_list
+
+    async def _create_first_combination(self, user_id: str) -> Optional[dict]:
+        """Crea la primera combinación para un usuario nuevo.
+        
+        v8: Usa nicho/pais/ciudades de la config del usuario si están configurados.
+        """
         try:
-            nicho = random.choice(NICHOS)
-            pais = random.choice(PAISES)
-            ciudad = random.choice(CIUDADES_POR_PAIS[pais])
+            nichos_pool, paises_pool, user_ciudades = self._get_user_search_params(user_id)
+            
+            nicho = random.choice(nichos_pool)
+            pais = random.choice(paises_pool)
+            
+            if user_ciudades:
+                ciudad = random.choice(user_ciudades)
+            else:
+                ciudades = CIUDADES_POR_PAIS.get(pais, ["Buenos Aires"])
+                ciudad = random.choice(ciudades)
             
             data = {
-                "user_id": user_id,
-                "nicho": nicho,
-                "ciudad": ciudad,
-                "pais": pais,
-                "current_page": 0,
-                "total_domains_found": 0,
-                "is_exhausted": False,
-                "last_searched_at": datetime.utcnow().isoformat()
+                "user_id": user_id, "nicho": nicho, "ciudad": ciudad,
+                "pais": pais, "current_page": 0, "total_domains_found": 0,
+                "is_exhausted": False, "last_searched_at": utc_now().isoformat()
             }
-            
-            response = self.supabase.table("domain_search_tracking")\
-                .insert(data)\
-                .execute()
-            
+            response = self.supabase.table("domain_search_tracking").insert(data).execute()
+            log.info(f"[{user_id[:8]}] ➕ Primera combinación: {nicho} | {ciudad}, {pais}")
             return response.data[0] if response.data else None
-            
         except Exception as e:
-            log.error(f"❌ Error creando primera combinación: {e}")
+            log.error(f"[{user_id[:8]}] ❌ Error creando primera combinación: {e}")
             return None
 
     async def _increment_page(self, user_id: str, nicho: str, ciudad: str, pais: str, domains_found: int):
-        """Incrementa la página para la próxima búsqueda de esta combinación."""
+        """Incrementa página con un solo UPDATE (sin SELECT previo)."""
         try:
-            # Primero obtener el valor actual
-            response = self.supabase.table("domain_search_tracking")\
-                .select("current_page, total_domains_found")\
-                .eq("user_id", user_id)\
-                .eq("nicho", nicho)\
-                .eq("ciudad", ciudad)\
-                .eq("pais", pais)\
-                .execute()
-            
-            if response.data:
-                current_data = response.data[0]
-                new_page = current_data['current_page'] + 1
-                new_total = current_data['total_domains_found'] + domains_found
-                
-                # Actualizar con los nuevos valores
-                self.supabase.table("domain_search_tracking")\
-                    .update({
-                        "current_page": new_page,
-                        "total_domains_found": new_total,
-                        "last_searched_at": datetime.utcnow().isoformat(),
-                        "updated_at": datetime.utcnow().isoformat()
-                    })\
-                    .eq("user_id", user_id)\
-                    .eq("nicho", nicho)\
-                    .eq("ciudad", ciudad)\
-                    .eq("pais", pais)\
+            # Intentar usar RPC si existe, sino fallback a SELECT + UPDATE
+            try:
+                self.supabase.rpc("increment_search_page", {
+                    "p_user_id": user_id,
+                    "p_nicho": nicho,
+                    "p_ciudad": ciudad,
+                    "p_pais": pais,
+                    "p_domains_found": domains_found
+                }).execute()
+            except Exception:
+                # Fallback: SELECT + UPDATE (compatibilidad con DB sin RPC)
+                response = self.supabase.table("domain_search_tracking")\
+                    .select("current_page, total_domains_found")\
+                    .eq("user_id", user_id).eq("nicho", nicho)\
+                    .eq("ciudad", ciudad).eq("pais", pais)\
                     .execute()
+                
+                if response.data:
+                    cd = response.data[0]
+                    self.supabase.table("domain_search_tracking").update({
+                        "current_page": cd['current_page'] + 1,
+                        "total_domains_found": cd['total_domains_found'] + domains_found,
+                        "last_searched_at": utc_now().isoformat(),
+                        "updated_at": utc_now().isoformat()
+                    }).eq("user_id", user_id).eq("nicho", nicho)\
+                      .eq("ciudad", ciudad).eq("pais", pais).execute()
         except Exception as e:
             log.error(f"❌ Error incrementando página: {e}")
 
     async def _mark_combination_exhausted(self, user_id: str, nicho: str, ciudad: str, pais: str):
-        """Marca una combinación como agotada y crea la siguiente."""
+        """Marca combinación agotada y crea la siguiente."""
         try:
-            # Marcar actual como agotada
-            self.supabase.table("domain_search_tracking")\
-                .update({
-                    "is_exhausted": True,
-                    "updated_at": datetime.utcnow().isoformat()
-                })\
-                .eq("user_id", user_id)\
-                .eq("nicho", nicho)\
-                .eq("ciudad", ciudad)\
-                .eq("pais", pais)\
-                .execute()
+            self.supabase.table("domain_search_tracking").update({
+                "is_exhausted": True, "updated_at": utc_now().isoformat()
+            }).eq("user_id", user_id).eq("nicho", nicho)\
+              .eq("ciudad", ciudad).eq("pais", pais).execute()
             
-            # Crear siguiente combinación
             await self._create_next_combination(user_id, nicho, ciudad, pais)
-            
         except Exception as e:
-            log.error(f"❌ Error marcando combinación como agotada: {e}")
+            log.error(f"❌ Error marcando agotada: {e}")
 
-    async def _create_next_combination(self, user_id: str, current_nicho: str, current_ciudad: str, current_pais: str):
+    async def _create_next_combination(self, user_id: str, current_nicho: str,
+                                       current_ciudad: str, current_pais: str):
         """
-        Crea la siguiente combinación para buscar.
-        
-        ESTRATEGIA DE PROGRESIÓN INFINITA:
-        1. Siguiente ciudad en el MISMO país/nicho (completar país ciudad por ciudad)
-        2. Si terminó todas las ciudades → Siguiente PAÍS (mismo nicho)
-        3. Si terminó todos los países → Siguiente NICHO (primer país, primera ciudad)
-        4. Loop infinito: cuando termina todos los nichos, vuelve al primero
-        
-        Ejemplo de progresión:
-        - inmobiliarias | Buenos Aires, Argentina
-        - inmobiliarias | Córdoba, Argentina
-        - inmobiliarias | Rosario, Argentina
-        - ... (350 ciudades de Argentina)
-        - inmobiliarias | Ciudad de México, México
-        - inmobiliarias | Guadalajara, México
-        - ... (300 ciudades de México)
-        - ... (todos los países)
-        - estudios contables | Buenos Aires, Argentina (siguiente nicho)
-        
-        Esto genera ~250,000 combinaciones antes de repetir.
+        Progresión infinita: ciudad → país → nicho → loop.
+        v8: Respeta config del usuario. Si tiene nicho/pais/ciudades configurados,
+        solo rota dentro de esos valores.
         """
         try:
-            # 1. Intentar siguiente CIUDAD en el mismo país/nicho
-            ciudades = CIUDADES_POR_PAIS.get(current_pais, [])
-            current_index = ciudades.index(current_ciudad) if current_ciudad in ciudades else -1
+            nichos_pool, paises_pool, user_ciudades = self._get_user_search_params(user_id)
             
-            if current_index >= 0 and current_index < len(ciudades) - 1:
-                # ✅ Hay más ciudades en este país → Siguiente ciudad
-                next_ciudad = ciudades[current_index + 1]
-                next_pais = current_pais
-                next_nicho = current_nicho
-                log.info(f"📍 Progresión: Siguiente ciudad en {current_pais}")
+            # Determinar pool de ciudades para el país actual
+            if user_ciudades:
+                ciudades = user_ciudades
             else:
-                # 2. No hay más ciudades → Intentar siguiente PAÍS (mismo nicho)
-                pais_index = PAISES.index(current_pais) if current_pais in PAISES else -1
-                
-                if pais_index >= 0 and pais_index < len(PAISES) - 1:
-                    # ✅ Hay más países → Siguiente país, primera ciudad
-                    next_pais = PAISES[pais_index + 1]
-                    next_ciudad = CIUDADES_POR_PAIS[next_pais][0]
-                    next_nicho = current_nicho
-                    log.info(f"🌎 Progresión: Completado {current_pais}, pasando a {next_pais}")
-                else:
-                    # 3. No hay más países → Siguiente NICHO (reiniciar países)
-                    nicho_index = NICHOS.index(current_nicho) if current_nicho in NICHOS else -1
-                    
-                    if nicho_index >= 0 and nicho_index < len(NICHOS) - 1:
-                        # ✅ Siguiente nicho
-                        next_nicho = NICHOS[nicho_index + 1]
-                    else:
-                        # ✅ Loop infinito: volver al primer nicho
-                        next_nicho = NICHOS[0]
-                        log.info(f"🔄 Ciclo completo terminado! Reiniciando desde el primer nicho")
-                    
-                    next_pais = PAISES[0]  # Primer país (Argentina)
-                    next_ciudad = CIUDADES_POR_PAIS[next_pais][0]  # Primera ciudad
-                    log.info(f"🎯 Progresión: Completado nicho '{current_nicho}', pasando a '{next_nicho}'")
+                ciudades = CIUDADES_POR_PAIS.get(current_pais, [])
             
-            # Verificar si ya existe (evitar duplicados)
+            idx = ciudades.index(current_ciudad) if current_ciudad in ciudades else -1
+            
+            if 0 <= idx < len(ciudades) - 1:
+                # Siguiente ciudad en el mismo país
+                next_ciudad, next_pais, next_nicho = ciudades[idx + 1], current_pais, current_nicho
+            else:
+                # Ciudades agotadas → siguiente país
+                pais_idx = paises_pool.index(current_pais) if current_pais in paises_pool else -1
+                if 0 <= pais_idx < len(paises_pool) - 1:
+                    next_pais = paises_pool[pais_idx + 1]
+                    if user_ciudades:
+                        next_ciudad = user_ciudades[0]
+                    else:
+                        next_ciudad = CIUDADES_POR_PAIS.get(next_pais, ["Buenos Aires"])[0]
+                    next_nicho = current_nicho
+                else:
+                    # Países agotados → siguiente nicho
+                    nicho_idx = nichos_pool.index(current_nicho) if current_nicho in nichos_pool else -1
+                    next_nicho = nichos_pool[(nicho_idx + 1) % len(nichos_pool)]
+                    next_pais = paises_pool[0]
+                    if user_ciudades:
+                        next_ciudad = user_ciudades[0]
+                    else:
+                        next_ciudad = CIUDADES_POR_PAIS.get(next_pais, ["Buenos Aires"])[0]
+            
+            # Verificar si ya existe
             existing = self.supabase.table("domain_search_tracking")\
-                .select("id")\
-                .eq("user_id", user_id)\
-                .eq("nicho", next_nicho)\
-                .eq("ciudad", next_ciudad)\
-                .eq("pais", next_pais)\
-                .execute()
+                .select("id").eq("user_id", user_id)\
+                .eq("nicho", next_nicho).eq("ciudad", next_ciudad)\
+                .eq("pais", next_pais).execute()
             
             if not existing.data:
-                # Crear nueva combinación
-                data = {
-                    "user_id": user_id,
-                    "nicho": next_nicho,
-                    "ciudad": next_ciudad,
-                    "pais": next_pais,
-                    "current_page": 0,
-                    "total_domains_found": 0,
-                    "is_exhausted": False,
-                    "last_searched_at": datetime.utcnow().isoformat()
-                }
-                
-                self.supabase.table("domain_search_tracking")\
-                    .insert(data)\
-                    .execute()
-                
-                log.info(f"➕ Nueva: {next_nicho} | {next_ciudad}, {next_pais}")
-            else:
-                log.info(f"♻️  Ya existe: {next_nicho} | {next_ciudad}, {next_pais}")
+                self.supabase.table("domain_search_tracking").insert({
+                    "user_id": user_id, "nicho": next_nicho, "ciudad": next_ciudad,
+                    "pais": next_pais, "current_page": 0, "total_domains_found": 0,
+                    "is_exhausted": False, "last_searched_at": utc_now().isoformat()
+                }).execute()
+                log.info(f"[{user_id[:8]}] ➕ Siguiente: {next_nicho} | {next_ciudad}, {next_pais}")
             
         except Exception as e:
             log.error(f"❌ Error creando siguiente combinación: {e}")
 
     async def _reset_all_combinations(self, user_id: str):
-        """Resetea todas las combinaciones de un usuario (marca is_exhausted=false, page=0)."""
+        """Resetea todas las combinaciones (is_exhausted=false, page=0)."""
         try:
-            self.supabase.table("domain_search_tracking")\
-                .update({
-                    "is_exhausted": False,
-                    "current_page": 0,
-                    "updated_at": datetime.utcnow().isoformat()
-                })\
-                .eq("user_id", user_id)\
-                .execute()
-            
-            log.info(f"🔄 Todas las combinaciones reseteadas para {user_id[:8]}")
-            
+            self.supabase.table("domain_search_tracking").update({
+                "is_exhausted": False, "current_page": 0,
+                "updated_at": utc_now().isoformat()
+            }).eq("user_id", user_id).execute()
         except Exception as e:
             log.error(f"❌ Error reseteando combinaciones: {e}")
     
     async def _log_to_user(self, user_id: str, level: str, action: str, domain: str, message: str):
-        """Envía un log al usuario en tiempo real."""
+        """Envía log al usuario en tiempo real."""
         try:
             self.supabase.table("hunter_logs").insert({
-                'user_id': user_id,
-                'domain': domain,
-                'level': level,
-                'action': action,
-                'message': message,
+                'user_id': user_id, 'domain': domain,
+                'level': level, 'action': action, 'message': message,
             }).execute()
-        except Exception as e:
-            log.error(f"Error enviando log: {e}")
+        except Exception:
+            pass  # Non-critical, don't spam error logs
 
 
 # =============================================================================
@@ -995,19 +1346,14 @@ class DomainHunterWorker:
 
 async def main():
     """Entry point."""
-    # Log muy visible al inicio
-    print("\n" + "="*70)
-    print("DOMAIN HUNTER WORKER - STARTING UP")
-    print("="*70)
-    print(f"Timestamp: {datetime.utcnow().isoformat()}")
     env = "Railway" if os.getenv("RAILWAY_ENVIRONMENT") else "Local"
-    print(f"Environment: {env}")
-    print("="*70 + "\n")
+    print(f"\n{'='*70}")
+    print(f"DOMAIN HUNTER WORKER v8 | {env} | {utc_now().isoformat()}")
+    print(f"{'='*70}\n")
     
     worker = DomainHunterWorker()
     await worker.start()
 
 
 if __name__ == "__main__":
-    print("\n*** DOMAIN HUNTER WORKER - ENTRY POINT REACHED ***\n")
     asyncio.run(main())

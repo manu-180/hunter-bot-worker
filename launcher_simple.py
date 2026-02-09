@@ -1,25 +1,69 @@
 """
 Launcher que ejecuta ambos workers en el MISMO proceso usando asyncio.gather.
 
-Esto es mucho más confiable que multiprocessing o shell scripts en containers Docker/Railway:
-- No depende de shell scripts (evita problemas de CRLF, permisos, buffering)
-- No depende de multiprocessing (evita problemas de stdout en containers)
-- Ambos workers comparten el mismo event loop y los logs se ven directamente
+Optimizado v2:
+- Restart automático por worker individual (si uno crashea, no mata al otro)
+- Backoff exponencial en restarts
+- Logging mejorado con timestamps
 """
 import asyncio
 import sys
 import signal
-from datetime import datetime
+from datetime import datetime, timezone
+
+
+MAX_RESTARTS = 10  # Máximo de restarts por worker antes de abortar
+
+
+async def run_with_restart(worker_coro_factory, name: str):
+    """
+    Ejecuta un worker con restart automático y backoff exponencial.
+    
+    Si un worker crashea, se reinicia automáticamente sin afectar al otro.
+    
+    Args:
+        worker_coro_factory: Callable que retorna la coroutine del worker
+        name: Nombre del worker para logging
+    """
+    restarts = 0
+    while restarts < MAX_RESTARTS:
+        try:
+            print(f"[LAUNCHER] {name}: Iniciando (restart #{restarts})...", flush=True)
+            await worker_coro_factory()
+            # Si termina sin error, salir del loop
+            print(f"[LAUNCHER] {name}: Terminó normalmente", flush=True)
+            break
+        except KeyboardInterrupt:
+            print(f"\n[LAUNCHER] {name}: Interrumpido por el usuario", flush=True)
+            break
+        except Exception as e:
+            restarts += 1
+            backoff = min(5 * (2 ** min(restarts, 5)), 120)
+            print(
+                f"[LAUNCHER] {name}: CRASH #{restarts}/{MAX_RESTARTS}: {e}",
+                flush=True,
+            )
+            if restarts < MAX_RESTARTS:
+                print(
+                    f"[LAUNCHER] {name}: Reiniciando en {backoff}s...",
+                    flush=True,
+                )
+                await asyncio.sleep(backoff)
+            else:
+                print(
+                    f"[LAUNCHER] {name}: MÁXIMO DE RESTARTS ALCANZADO. Detenido.",
+                    flush=True,
+                )
 
 
 async def run_all():
-    """Ejecuta ambos workers como tareas asyncio concurrentes."""
-    print("\n" + "="*70, flush=True)
-    print("HUNTERBOT - ASYNC LAUNCHER v3", flush=True)
-    print("="*70, flush=True)
-    print(f"Timestamp: {datetime.utcnow().isoformat()} UTC", flush=True)
-    print("Modo: asyncio.gather (mismo proceso, mismo event loop)", flush=True)
-    print("="*70 + "\n", flush=True)
+    """Ejecuta ambos workers como tareas asyncio concurrentes con restart."""
+    print("\n" + "=" * 70, flush=True)
+    print("HUNTERBOT - ASYNC LAUNCHER v4 (con restart automático)", flush=True)
+    print("=" * 70, flush=True)
+    print(f"Timestamp: {datetime.now(timezone.utc).isoformat()} UTC", flush=True)
+    print("Modo: asyncio.gather (mismo proceso, restart individual)", flush=True)
+    print("=" * 70 + "\n", flush=True)
 
     # Importar módulos
     print("[LAUNCHER] Importando domain_hunter_worker...", flush=True)
@@ -50,16 +94,17 @@ async def run_all():
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, signal_handler)
 
-    # Ejecutar ambos workers concurrentemente
-    print("\n[LAUNCHER] Iniciando ambos workers con asyncio.gather...", flush=True)
+    # Ejecutar ambos workers concurrentemente con restart individual
+    print("\n[LAUNCHER] Iniciando ambos workers con restart automático...", flush=True)
     print("[LAUNCHER] 1. DOMAIN-HUNTER: Busca dominios en Google (SerpAPI)", flush=True)
     print("[LAUNCHER] 2. LEADSNIPER: Scrapea emails y envía", flush=True)
-    print("[LAUNCHER] " + "="*70 + "\n", flush=True)
+    print(f"[LAUNCHER] Max restarts por worker: {MAX_RESTARTS}", flush=True)
+    print("[LAUNCHER] " + "=" * 70 + "\n", flush=True)
 
     try:
         await asyncio.gather(
-            domain_hunter_worker.main(),
-            leadsniper_main.main(),
+            run_with_restart(domain_hunter_worker.main, "DOMAIN-HUNTER"),
+            run_with_restart(leadsniper_main.main, "LEADSNIPER"),
         )
     except KeyboardInterrupt:
         print("\n[LAUNCHER] Interrumpido por el usuario", flush=True)

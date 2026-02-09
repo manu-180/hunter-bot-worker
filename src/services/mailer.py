@@ -1,20 +1,32 @@
 """
-Mailer Service - Email sending with Resend.
+Mailer Service - Email sending with Resend HTTP API.
 
-This module handles sending outreach emails using the Resend API.
+This module handles sending outreach emails using the Resend HTTP API directly.
+Uses httpx for async, thread-safe, per-request API key isolation (multi-tenant safe).
 Implements human-like delays between sends to avoid spam flags.
 """
 
 import asyncio
+import html as html_lib
 import os
 import random
+import re
+from pathlib import Path
 from typing import List, Optional
 
-import resend
+import httpx
 from dotenv import load_dotenv
 
+from src.config import BotConfig
 from src.domain.models import Lead, EmailResult, HunterConfig
 from src.utils.logger import log
+from src.utils.retry import retry_with_backoff
+
+# Resend HTTP API endpoint
+RESEND_API_URL = "https://api.resend.com/emails"
+
+# Email format validation
+EMAIL_REGEX = re.compile(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
 
 
 class MailerService:
@@ -45,605 +57,184 @@ class MailerService:
         """
         load_dotenv()
         
-        api_key = os.getenv("RESEND_API_KEY")
-        if not api_key:
+        self._default_api_key = os.getenv("RESEND_API_KEY")
+        if not self._default_api_key:
             raise ValueError("RESEND_API_KEY must be set in environment variables")
         
-        resend.api_key = api_key
-        
-        self.from_email = os.getenv("FROM_EMAIL", "manuel@botlode.com")
+        self.from_email = os.getenv("FROM_EMAIL", "manuel@getbotlode.com")
         self.from_name = os.getenv("FROM_NAME", "Manuel de Botlode")
         self.min_delay = min_delay
         self.max_delay = max_delay
         
-        # Load custom template or use default
+        # Reusable HTTP client with connection pooling (thread-safe for async)
+        self._http_client = httpx.AsyncClient(timeout=30)
+        
+        # Modo: "launch" = formato simple (ganar confianza), "full" = formato completo BotLode
+        self._email_mode = (os.getenv("HUNTER_EMAIL_MODE") or getattr(BotConfig, "EMAIL_MODE", "launch")).strip().lower()
+        if self._email_mode not in ("launch", "full"):
+            self._email_mode = "launch"
+        self._launch_subject = os.getenv("HUNTER_LAUNCH_SUBJECT") or getattr(BotConfig, "LAUNCH_SUBJECT", "Consulta sobre su sitio web")
+        
+        # Load template according to mode (launch = simple, full = branded)
         self._template = self._load_template()
 
     def _load_template(self) -> str:
         """
-        Load the email HTML template.
+        Load the email HTML template from external file.
         
-        Returns:
-            HTML template string with placeholders
+        - EMAIL_TEMPLATE_PATH (env): fuerza un archivo concreto.
+        - Modo "launch": templates/outreach_launch.html (simple, sin links, reply-bait).
+        - Modo "full": templates/outreach.html (formato completo BotLode con CTA).
         """
-        # Check for custom template file
+        base = Path(__file__).parent.parent.parent / "templates"
+        if not base.exists():
+            base = Path("templates")
+        
+        # Custom path tiene prioridad
         template_path = os.getenv("EMAIL_TEMPLATE_PATH")
         if template_path and os.path.exists(template_path):
             with open(template_path, 'r', encoding='utf-8') as f:
+                log.info(f"Template cargado desde: {template_path}")
                 return f.read()
         
-        # Default template - BotLode branded, iframe matches botlode_web/index.html
-        return """
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-            line-height: 1.7;
-            color: #1a1a1a;
-            max-width: 620px;
-            margin: 0 auto;
-            padding: 0;
-            background: #050505;
-        }
-        .wrapper {
-            background: #050505;
-            padding: 20px 12px;
-        }
-        .container {
-            background: #ffffff;
-            border-radius: 16px;
-            overflow: hidden;
-            box-shadow: 0 4px 40px rgba(255, 192, 0, 0.12);
-        }
-
-        /* ── HEADER ── */
-        .header {
-            background: linear-gradient(135deg, #050505 0%, #111 100%);
-            padding: 36px 30px 32px;
-            text-align: center;
-            border-bottom: 3px solid #FFC000;
-        }
-        .brand-name {
-            font-size: 36px;
-            font-weight: 900;
-            color: #FFC000;
-            letter-spacing: -1px;
-            margin: 0 0 4px 0;
-        }
-        .brand-sub {
-            font-size: 12px;
-            letter-spacing: 3px;
-            text-transform: uppercase;
-            color: #888;
-            margin: 0;
-        }
-        .header-title {
-            font-size: 22px;
-            font-weight: 700;
-            color: #fff;
-            margin: 20px 0 0 0;
-            line-height: 1.35;
-        }
-
-        /* ── CONTENT ── */
-        .content {
-            padding: 36px 32px;
-            background: #ffffff;
-        }
-        .greeting {
-            font-size: 16px;
-            color: #333;
-            margin: 0 0 18px 0;
-        }
-        .hook {
-            font-size: 19px;
-            font-weight: 700;
-            color: #D48800;
-            margin: 24px 0 16px 0;
-            line-height: 1.4;
-        }
-        .body-text {
-            font-size: 15px;
-            color: #444;
-            margin: 0 0 16px 0;
-            line-height: 1.7;
-        }
-
-        /* ── HIGHLIGHT BOX ── */
-        .highlight-box {
-            background: #FFFBEB;
-            border-left: 4px solid #FFC000;
-            padding: 18px 20px;
-            margin: 24px 0;
-            border-radius: 0 8px 8px 0;
-        }
-        .highlight-box p {
-            margin: 0;
-            font-size: 15px;
-            color: #1a1a1a;
-            line-height: 1.6;
-        }
-
-        /* ── BENEFITS ── */
-        .benefits {
-            margin: 28px 0;
-        }
-        .benefit-item {
-            display: flex;
-            align-items: flex-start;
-            margin: 0 0 12px 0;
-            padding: 14px 16px;
-            background: #FAFAFA;
-            border-radius: 10px;
-            border: 1px solid #F0F0F0;
-        }
-        .benefit-icon {
-            font-size: 22px;
-            margin-right: 14px;
-            min-width: 28px;
-            line-height: 1;
-        }
-        .benefit-text {
-            font-size: 14px;
-            line-height: 1.5;
-            color: #333;
-        }
-        .benefit-text strong {
-            color: #1a1a1a;
-        }
-
-        /* ── URGENCY BANNER ── */
-        .urgency {
-            background: #050505;
-            color: #FFC000;
-            padding: 14px 20px;
-            border-radius: 10px;
-            text-align: center;
-            margin: 28px 0;
-            font-weight: 700;
-            font-size: 13px;
-            letter-spacing: 0.5px;
-        }
-
-        /* ── FREE TRIAL SECTION ── */
-        .free-trial-section {
-            background: linear-gradient(135deg, #050505 0%, #0D1117 50%, #050505 100%);
-            border-radius: 16px;
-            padding: 36px 24px;
-            margin: 28px 0;
-            text-align: center;
-            border: 1px solid #222;
-        }
-        .trial-badge {
-            display: inline-block;
-            background: rgba(255, 192, 0, 0.15);
-            border: 1px solid rgba(255, 192, 0, 0.4);
-            color: #FFC000;
-            padding: 6px 18px;
-            border-radius: 20px;
-            font-size: 11px;
-            font-weight: 800;
-            letter-spacing: 2px;
-            text-transform: uppercase;
-            margin-bottom: 16px;
-        }
-        .trial-emoji {
-            font-size: 48px;
-            margin: 10px 0 14px 0;
-        }
-        .trial-title {
-            color: #ffffff;
-            font-size: 24px;
-            font-weight: 800;
-            margin: 0 0 10px 0;
-            line-height: 1.3;
-        }
-        .trial-title-gold {
-            color: #FFC000;
-        }
-        .trial-sub {
-            color: #999;
-            font-size: 14px;
-            margin: 0 0 24px 0;
-            line-height: 1.5;
-        }
-        .trial-sub code {
-            background: rgba(255, 192, 0, 0.15);
-            color: #FFC000;
-            padding: 2px 8px;
-            border-radius: 4px;
-            font-size: 12px;
-            border: 1px solid rgba(255, 192, 0, 0.3);
-        }
-
-        /* ── CODE CARD ── */
-        .code-card {
-            background: #0D1117;
-            border: 1px solid #30363D;
-            border-radius: 10px;
-            overflow: hidden;
-            margin: 20px auto;
-            max-width: 520px;
-            text-align: left;
-        }
-        .code-bar {
-            background: #161B22;
-            padding: 10px 14px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 1px solid #30363D;
-        }
-        .code-bar-left {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-        .code-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            display: inline-block;
-        }
-        .code-dot-green { background: #3FB950; }
-        .code-dot-yellow { background: #FFC000; }
-        .code-dot-red { background: #F85149; }
-        .code-bar-label {
-            color: #8B949E;
-            font-size: 11px;
-            font-weight: 600;
-            margin-left: 8px;
-        }
-        .code-bar-copy {
-            color: #FFC000;
-            font-size: 10px;
-            font-weight: 700;
-            letter-spacing: 0.5px;
-            background: rgba(255, 192, 0, 0.12);
-            padding: 3px 10px;
-            border-radius: 4px;
-            border: 1px solid rgba(255, 192, 0, 0.25);
-        }
-        .code-body {
-            padding: 14px 16px;
-            font-family: 'SF Mono', 'Fira Code', 'Courier New', monospace;
-            font-size: 10.5px;
-            color: #C9D1D9;
-            line-height: 1.7;
-            word-break: break-all;
-            overflow-x: auto;
-        }
-        .code-comment { color: #8B949E; }
-        .code-tag { color: #FF7B72; }
-        .code-attr { color: #79C0FF; }
-        .code-val { color: #A5D6FF; }
-        .code-str { color: #FFC000; }
-        .code-steps {
-            background: #161B22;
-            padding: 12px 14px;
-            display: flex;
-            justify-content: center;
-            gap: 20px;
-            flex-wrap: wrap;
-            border-top: 1px solid #30363D;
-        }
-        .code-step {
-            color: #8B949E;
-            font-size: 11px;
-            font-weight: 600;
-        }
-        .code-step-num {
-            color: #FFC000;
-            font-weight: 800;
-            margin-right: 4px;
-        }
-
-        /* ── RESULTS ROW ── */
-        .results-row {
-            display: flex;
-            justify-content: center;
-            gap: 28px;
-            margin: 24px 0;
-            flex-wrap: wrap;
-        }
-        .result-item {
-            text-align: center;
-        }
-        .result-icon {
-            font-size: 26px;
-            margin-bottom: 4px;
-        }
-        .result-text {
-            color: #ccc;
-            font-size: 11px;
-            font-weight: 600;
-        }
-        .trial-note {
-            color: #666;
-            font-size: 12px;
-            margin: 18px 0 0 0;
-            line-height: 1.5;
-            padding: 10px 14px;
-            background: rgba(255, 192, 0, 0.06);
-            border-radius: 6px;
-            border: 1px solid #222;
-        }
-
-        /* ── CTA SECTION ── */
-        .cta-section {
-            text-align: center;
-            margin: 28px 0 8px 0;
-        }
-        .cta-question {
-            font-size: 18px;
-            font-weight: 700;
-            color: #1a1a1a;
-            margin: 0 0 6px 0;
-        }
-        .cta-sub {
-            font-size: 15px;
-            color: #666;
-            margin: 0 0 20px 0;
-        }
-        .cta-button {
-            display: inline-block;
-            background: #FFC000;
-            color: #000 !important;
-            padding: 16px 44px;
-            text-decoration: none !important;
-            border-radius: 50px;
-            font-weight: 800;
-            font-size: 15px;
-            letter-spacing: 0.5px;
-            text-transform: uppercase;
-        }
-
-        /* ── SIGNATURE ── */
-        .signature {
-            margin-top: 32px;
-            padding-top: 24px;
-            border-top: 2px solid #F5F5F5;
-        }
-        .sig-name {
-            font-weight: 700;
-            font-size: 15px;
-            color: #1a1a1a;
-            margin: 0 0 2px 0;
-        }
-        .sig-role {
-            color: #888;
-            font-size: 13px;
-            margin: 0 0 2px 0;
-        }
-        .sig-tagline {
-            color: #FFC000;
-            font-size: 12px;
-            font-weight: 600;
-            margin: 4px 0 0 0;
-        }
-
-        /* ── FOOTER ── */
-        .footer {
-            background: #050505;
-            color: #666;
-            text-align: center;
-            padding: 24px 20px;
-            font-size: 11px;
-            line-height: 1.7;
-        }
-        .footer a {
-            color: #FFC000;
-            text-decoration: none;
-        }
-        .footer-brand {
-            color: #FFC000;
-            font-weight: 700;
-            font-size: 14px;
-            letter-spacing: -0.5px;
-        }
-    </style>
-</head>
-<body>
-    <div class="wrapper">
-    <div class="container">
-        <!-- HEADER -->
-        <div class="header">
-            <p class="brand-name">BotLode</p>
-            <p class="brand-sub">Fabrica de Bots IA</p>
-            <p class="header-title">Tu competencia ya tiene un empleado<br>que nunca duerme</p>
-        </div>
+        # Según modo: launch (lanzamiento) o full (completo)
+        if self._email_mode == "launch":
+            for path in [base / "outreach_launch.html", Path("templates") / "outreach_launch.html"]:
+                if path.exists():
+                    with open(path, 'r', encoding='utf-8') as f:
+                        log.info(f"Template LAUNCH cargado: {path}")
+                        return f.read()
+        else:
+            for path in [base / "outreach.html", Path("templates") / "outreach.html"]:
+                if path.exists():
+                    with open(path, 'r', encoding='utf-8') as f:
+                        log.info(f"Template FULL cargado: {path}")
+                        return f.read()
         
-        <!-- CONTENT -->
-        <div class="content">
-            <p class="greeting">Hola, <strong>{{company_name}}</strong>.</p>
-            
-            <p class="body-text">Estuve en tu web <strong>{{domain}}</strong> y noté que no tenés un asistente virtual con inteligencia artificial.</p>
-            
-            <p class="hook">¿Cuántos clientes perdés mientras dormís?<br>¿Y los fines de semana?</p>
-            
-            <p class="body-text">Mientras leés esto, hay empresas de tu rubro que ya tienen un <strong>bot con IA</strong> trabajando 24/7, 365 días al año, cerrando ventas sin descanso.</p>
-            
-            <div class="highlight-box">
-                <p><strong>Lo mejor:</strong> Este bot no solo responde preguntas. Te avisa al instante cuando un visitante muestra interés real para que cierres la venta en el momento justo.</p>
-            </div>
-            
-            <!-- BENEFITS -->
-            <div class="benefits">
-                <div class="benefit-item">
-                    <div class="benefit-icon">💰</div>
-                    <div class="benefit-text"><strong>Se paga solo.</strong> Cada lead que captura vale más que su costo mensual.</div>
-                </div>
-                <div class="benefit-item">
-                    <div class="benefit-icon">🎨</div>
-                    <div class="benefit-text"><strong>Tiene personalidad.</strong> Cambia de color según el modo: vendedor, técnico, enojado, feliz.</div>
-                </div>
-                <div class="benefit-item">
-                    <div class="benefit-icon">⚡</div>
-                    <div class="benefit-text"><strong>Te sirve clientes en bandeja.</strong> Captura contactos y te manda la info por mail en tiempo real.</div>
-                </div>
-                <div class="benefit-item">
-                    <div class="benefit-icon">👀</div>
-                    <div class="benefit-text"><strong>Capta la atención.</strong> Sigue el mouse con la cabeza y engancha al visitante desde el segundo 1.</div>
-                </div>
-                <div class="benefit-item">
-                    <div class="benefit-icon">📊</div>
-                    <div class="benefit-text"><strong>Historial completo.</strong> Todos los chats guardados con monitoreo en tiempo real.</div>
-                </div>
-            </div>
-            
-            <div class="urgency">⏰ TUS COMPETIDORES YA LO ESTÁN USANDO</div>
-            
-            <!-- FREE TRIAL SECTION -->
-            <div class="free-trial-section">
-                <div class="trial-badge">⚡ PRUEBA GRATIS ⚡</div>
-                
-                <div class="trial-emoji">🎁</div>
-                
-                <h2 class="trial-title">Integralo en tu web en <span class="trial-title-gold">30 segundos</span></h2>
-                
-                <p class="trial-sub">Copiá este código y pegalo antes del <code>&lt;/body&gt;</code> de tu sitio</p>
-                
-                <!-- CODE CARD - iframe + script idéntico a botlode_web/index.html -->
-                <div class="code-card">
-                    <div class="code-bar">
-                        <div class="code-bar-left">
-                            <span class="code-dot code-dot-red"></span>
-                            <span class="code-dot code-dot-yellow"></span>
-                            <span class="code-dot code-dot-green"></span>
-                            <span class="code-bar-label">botlode-player.html</span>
-                        </div>
-                        <span class="code-bar-copy">COPIAR</span>
-                    </div>
-                    
-                    <div class="code-body">
-                        <span class="code-comment">&lt;!-- BotLode Player --&gt;</span><br>
-                        <span class="code-tag">&lt;iframe</span><br>
-                        &nbsp;&nbsp;<span class="code-attr">id</span>=<span class="code-val">"botlode-player"</span><br>
-                        &nbsp;&nbsp;<span class="code-attr">src</span>=<span class="code-str">"https://botlode-player.vercel.app?botId=0038971a-da75-4ddc-8663-d52a6b8f2936&amp;v=2.5"</span><br>
-                        &nbsp;&nbsp;<span class="code-attr">style</span>=<span class="code-val">"position:fixed;bottom:16px;right:16px;width:140px;height:140px;border:none;z-index:9998;pointer-events:none;background:transparent !important;background-color:transparent !important;-webkit-background-color:transparent !important;opacity:0;overflow:hidden;will-change:width,height;transform:translateZ(0);backface-visibility:hidden;-webkit-backface-visibility:hidden;"</span><br>
-                        &nbsp;&nbsp;<span class="code-attr">allow</span>=<span class="code-val">"clipboard-write"</span><br>
-                        &nbsp;&nbsp;<span class="code-attr">loading</span>=<span class="code-val">"lazy"</span><br>
-                        &nbsp;&nbsp;<span class="code-attr">allowtransparency</span>=<span class="code-val">"true"</span><span class="code-tag">&gt;&lt;/iframe&gt;</span><br>
-                        <br>
-                        <span class="code-comment">&lt;!-- Activación + resize --&gt;</span><br>
-                        <span class="code-tag">&lt;script&gt;</span><br>
-                        <span class="code-val">!function(){var e=document.getElementById</span><br>
-                        <span class="code-val">("botlode-player"),x=!1;if(!e)return;</span><br>
-                        <span class="code-val">window.addEventListener("message",function(t){</span><br>
-                        <span class="code-val">"CMD_READY"===t.data?(e.style.pointerEvents=</span><br>
-                        <span class="code-val">"auto",e.style.opacity="1"):"CMD_OPEN"===</span><br>
-                        <span class="code-val">t.data&amp;&amp;!x?(e.style.transition="none",</span><br>
-                        <span class="code-val">e.style.opacity="0",window.innerWidth&lt;600?</span><br>
-                        <span class="code-val">(e.style.left="0",e.style.top="0",e.style.right</span><br>
-                        <span class="code-val">="0",e.style.bottom="0",e.style.width="100%",</span><br>
-                        <span class="code-val">e.style.height="100%"):(e.style.width="450px",</span><br>
-                        <span class="code-val">e.style.height="calc(100vh - 32px)"),</span><br>
-                        <span class="code-val">e.offsetHeight,requestAnimationFrame(function(){</span><br>
-                        <span class="code-val">requestAnimationFrame(function(){e.style.</span><br>
-                        <span class="code-val">transition="opacity .1s ease-out",e.style.</span><br>
-                        <span class="code-val">opacity="1"})}),x=!0):"CMD_CLOSE"===t.data</span><br>
-                        <span class="code-val">&amp;&amp;x&amp;&amp;(e.style.transition="opacity .12s</span><br>
-                        <span class="code-val">ease-out",e.style.opacity="0",setTimeout(</span><br>
-                        <span class="code-val">function(){e.style.transition="none",e.style</span><br>
-                        <span class="code-val">.left="auto",e.style.top="auto",e.style.right=</span><br>
-                        <span class="code-val">"16px",e.style.bottom="16px",e.style.width=</span><br>
-                        <span class="code-val">"140px",e.style.height="140px",e.offsetHeight,</span><br>
-                        <span class="code-val">e.style.transition="opacity .3s ease-out",</span><br>
-                        <span class="code-val">e.style.opacity="1"},500),x=!1)});</span><br>
-                        <span class="code-val">setTimeout(function(){e.style.opacity==="0"</span><br>
-                        <span class="code-val">&amp;&amp;(e.style.pointerEvents="auto",e.style</span><br>
-                        <span class="code-val">.opacity="1")},8e3)}();</span><br>
-                        <span class="code-tag">&lt;/script&gt;</span>
-                    </div>
-                    
-                    <div class="code-steps">
-                        <span class="code-step"><span class="code-step-num">1.</span> Seleccioná todo</span>
-                        <span class="code-step"><span class="code-step-num">2.</span> Copiá (Ctrl+C)</span>
-                        <span class="code-step"><span class="code-step-num">3.</span> Pegá en tu HTML</span>
-                    </div>
-                </div>
-                
-                <div class="results-row">
-                    <div class="result-item">
-                        <div class="result-icon">⚡</div>
-                        <div class="result-text">Activo al instante</div>
-                    </div>
-                    <div class="result-item">
-                        <div class="result-icon">🎨</div>
-                        <div class="result-text">Diseño pro incluido</div>
-                    </div>
-                    <div class="result-item">
-                        <div class="result-icon">🔒</div>
-                        <div class="result-text">Sin registro</div>
-                    </div>
-                </div>
-                
-                <p class="trial-note">El bot se integra automáticamente y comienza a interactuar con tus visitantes.</p>
-            </div>
-            
-            <!-- CTA -->
-            <div class="cta-section">
-                <p class="cta-question">¿Querés verlo en acción primero?</p>
-                <p class="cta-sub">Mirá cómo funciona en mi página.</p>
-                <a href="{{calendar_link}}" class="cta-button" style="color: #000 !important; text-decoration: none;">VER DEMO EN VIVO</a>
-            </div>
-            
-            <!-- SIGNATURE -->
-            <div class="signature">
-                <p class="sig-name">{{sender_name}}</p>
-                <p class="sig-role">Founder @ BotLode</p>
-                <p class="sig-tagline">El bot que vende mientras dormís 🤖</p>
-            </div>
-        </div>
-        
-        <!-- FOOTER -->
-        <div class="footer">
-            <p class="footer-brand">BotLode</p>
-            <p style="margin: 8px 0;">Email enviado a <strong>{{email}}</strong> desde <strong>{{domain}}</strong></p>
-            <p>Si no querés recibir más correos, respondé con la palabra <strong>REMOVER</strong>.</p>
-            <p style="margin-top: 12px;"><a href="https://www.botlode.com">www.botlode.com</a></p>
-        </div>
-    </div>
-    </div>
-</body>
-</html>
-"""
+        log.warning("Template HTML no encontrado, usando fallback mínimo")
+        return """<!DOCTYPE html><html><body>
+        <p>Hola,</p>
+        <p>Soy {{sender_name}}. Vi tu web {{domain}}. ¿Te envío un demo?</p>
+        <p>{{sender_name}}, Fundador</p>
+        </body></html>"""
 
-    def _render_template(self, lead: Lead) -> str:
+    @staticmethod
+    def is_valid_email(email: str) -> bool:
+        """Validate email format before sending."""
+        return bool(EMAIL_REGEX.match(email))
+
+    # v8: placeholders del template para renderizado eficiente con loop
+    _TEMPLATE_PLACEHOLDERS = (
+        "{{company_name}}", "{{domain}}", "{{email}}",
+        "{{sender_name}}", "{{sender_email}}", "{{calendar_link}}"
+    )
+
+    def _render_template(self, lead: Lead, config: Optional[HunterConfig] = None) -> str:
         """
-        Render the email template with lead data.
+        Render the email template with lead data, sanitizing all values.
+        
+        v8: Usa dict mapping + single pass para reducir string allocations.
+        Antes: 6 llamadas a .replace() = 6 strings intermedios.
+        Ahora: 1 loop con reemplazos directos.
         
         Args:
             lead: Lead object with data to insert
+            config: Optional user config for per-user settings
             
         Returns:
             Rendered HTML string
         """
-        # Extract company name: prefer meta_title (often has company name), else domain stem
+        # Extract company name: prefer meta_title, else domain stem
         raw_domain = lead.domain.replace("https://", "").replace("http://", "").rstrip("/").split("/")[0]
         company_name = lead.meta_title or raw_domain.split(".")[0].replace("-", " ").title()
         
-        # Replace placeholders
+        # Determine sender settings from config or environment
+        if config:
+            sender_name = config.from_name or os.getenv("SENDER_NAME", self.from_name)
+            calendar_link = config.calendar_link or os.getenv("CALENDAR_LINK", "https://www.botlode.com")
+            from_email = config.from_email or self.from_email
+        else:
+            sender_name = os.getenv("SENDER_NAME", self.from_name)
+            calendar_link = os.getenv("CALENDAR_LINK", "https://www.botlode.com")
+            from_email = self.from_email
+        
+        # v8: dict mapping para renderizado eficiente
+        # NOTE: calendar_link usa quote=False porque va en href y & no debe escaparse
+        replacements = {
+            "{{company_name}}": html_lib.escape(company_name),
+            "{{domain}}": html_lib.escape(lead.domain),
+            "{{email}}": html_lib.escape(lead.email or ""),
+            "{{sender_name}}": html_lib.escape(sender_name),
+            "{{sender_email}}": html_lib.escape(from_email),
+            "{{calendar_link}}": html_lib.escape(calendar_link, quote=False),
+        }
+        
         html = self._template
-        html = html.replace("{{company_name}}", company_name)
-        html = html.replace("{{domain}}", lead.domain)
-        html = html.replace("{{email}}", lead.email or "")
-        html = html.replace("{{sender_name}}", os.getenv("SENDER_NAME", "El equipo de BotLode"))
-        html = html.replace("{{sender_email}}", self.from_email)
-        html = html.replace("{{calendar_link}}", os.getenv("CALENDAR_LINK", "https://www.botlode.com"))
+        for placeholder, value in replacements.items():
+            html = html.replace(placeholder, value)
         
         return html
 
-    async def _send_single(self, lead: Lead) -> EmailResult:
+    async def _send_email_http(self, params: dict, api_key: str) -> dict:
         """
-        Send a single email to a lead.
+        Send email via Resend HTTP API with per-request API key.
+        
+        Thread-safe and multi-tenant safe: each request carries
+        its own Authorization header via the shared connection-pooled client.
+        Includes automatic retry for 429 (rate limit) and 5xx (server error).
+        
+        Args:
+            params: Email parameters (from, to, subject, html)
+            api_key: Resend API key for this specific request
+            
+        Returns:
+            Response JSON from Resend API
+        """
+        max_retries = 3
+        for attempt in range(max_retries):
+            response = await self._http_client.post(
+                RESEND_API_URL,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=params,
+            )
+            
+            if response.status_code == 429:
+                # Rate limited — respect Retry-After header or default to 60s
+                retry_after = int(response.headers.get("Retry-After", 60))
+                log.warning(f"Resend 429 rate limit. Esperando {retry_after}s (intento {attempt + 1}/{max_retries})")
+                await asyncio.sleep(retry_after)
+                continue
+            
+            if response.status_code >= 500 and attempt < max_retries - 1:
+                # Server error — short backoff and retry
+                wait = 5 * (attempt + 1)
+                log.warning(f"Resend {response.status_code} error. Retry en {wait}s (intento {attempt + 1}/{max_retries})")
+                await asyncio.sleep(wait)
+                continue
+            
+            response.raise_for_status()
+            return response.json()
+        
+        # If we exhausted retries, raise the last error
+        response.raise_for_status()
+        return response.json()
+
+    async def close(self) -> None:
+        """Close the HTTP client and release connections."""
+        await self._http_client.aclose()
+
+    async def _send_single(self, lead: Lead, api_key: Optional[str] = None,
+                           config: Optional[HunterConfig] = None) -> EmailResult:
+        """
+        Send a single email to a lead via Resend HTTP API.
         
         Args:
             lead: Lead object with email to send to
+            api_key: Optional API key override (for multi-tenant)
+            config: Optional user config for template personalization
             
         Returns:
             EmailResult with success status
@@ -655,22 +246,50 @@ class MailerService:
                 error="No email address available"
             )
         
+        if not self.is_valid_email(lead.email):
+            return EmailResult(
+                lead_id=lead.id,
+                success=False,
+                error=f"Formato de email inválido: {lead.email}"
+            )
+        
+        key = api_key or self._default_api_key
+        
         try:
             log.email(f"Enviando email a: {lead.email} ({lead.domain})")
             
-            # Render the template
-            html_content = self._render_template(lead)
+            # Render template (unified method handles both default and config)
+            html_content = self._render_template(lead, config)
+            
+            # Determine sender info
+            if config:
+                from_email = config.from_email or self.from_email
+                from_name = config.from_name or self.from_name
+                subject = config.email_subject or self._get_subject(lead)
+            else:
+                from_email = self.from_email
+                from_name = self.from_name
+                subject = self._get_subject(lead)
             
             # Prepare email params
             params = {
-                "from": f"{self.from_name} <{self.from_email}>",
+                "from": f"{from_name} <{from_email}>",
                 "to": [lead.email],
-                "subject": self._get_subject(lead),
+                "subject": subject,
                 "html": html_content,
             }
             
-            # Send via Resend
-            response = resend.Emails.send(params)
+            # Send via Resend HTTP API with retry for transient failures
+            response = await retry_with_backoff(
+                self._send_email_http,
+                params, key,
+                max_retries=2,
+                base_delay=2.0,
+                exceptions=(httpx.TransportError, httpx.TimeoutException),
+                on_retry=lambda e, attempt: log.warning(
+                    f"Retry {attempt}/2 enviando a {lead.email}: {str(e)[:80]}"
+                ),
+            )
             
             # Check for success
             if response and response.get("id"):
@@ -716,22 +335,23 @@ class MailerService:
 
     def _get_subject(self, lead: Lead) -> str:
         """
-        Generate email subject, optionally personalized.
-        Includes owner/recipient name when available (from email).
+        Generate email subject.
+        - Modo "launch": asunto aburrido/humano para no activar filtros (reply-bait).
+        - Modo "full": asunto con nombre o el default marketinero.
         """
-        owner_name = self._owner_name_from_lead(lead)
+        # Modo lanzamiento: asunto simple que parezca escrito por un humano
+        if self._email_mode == "launch":
+            return self._launch_subject
 
+        owner_name = self._owner_name_from_lead(lead)
         custom_subject = os.getenv("EMAIL_SUBJECT")
         if custom_subject:
-            # Replace placeholders in custom subject
             subject = custom_subject
             company_name = lead.meta_title or lead.domain.split('.')[0].title()
             subject = subject.replace("{{company_name}}", company_name)
             subject = subject.replace("{{domain}}", lead.domain)
             subject = subject.replace("{{owner_name}}", owner_name)
             return subject
-
-        # Default subject with recipient name when available
         if owner_name:
             return f"{owner_name}, tu web está perdiendo clientes - Elevá su nivel"
         return self.DEFAULT_SUBJECT
@@ -793,8 +413,11 @@ class MailerService:
         """
         Send an email using a specific user's HunterConfig.
         
-        This method temporarily uses the user's Resend API key and
-        email settings to send the email.
+        Thread-safe: uses per-request API key via HTTP header,
+        no global state is mutated.
+        
+        v8: Solo aplica human delay si el envío fue exitoso.
+        Antes esperaba 10-30s incluso si fallaba.
         
         Args:
             lead: Lead object to email
@@ -803,13 +426,6 @@ class MailerService:
         Returns:
             EmailResult with success status
         """
-        if not lead.email:
-            return EmailResult(
-                lead_id=lead.id,
-                success=False,
-                error="No email address available"
-            )
-        
         if not config.resend_api_key:
             return EmailResult(
                 lead_id=lead.id,
@@ -817,89 +433,11 @@ class MailerService:
                 error="Resend API key not configured"
             )
         
-        try:
-            log.email(f"Enviando email a: {lead.email} ({lead.domain}) con config de usuario")
-            
-            # Temporarily set user's API key
-            resend.api_key = config.resend_api_key
-            
-            # Use user's email settings
-            from_email = config.from_email or self.from_email
-            from_name = config.from_name or self.from_name
-            
-            # Render the template with user's calendar link
-            html_content = self._render_template_with_config(lead, config)
-            
-            # Get subject (from config or default)
-            subject = config.email_subject or self._get_subject(lead)
-            
-            # Prepare email params
-            params = {
-                "from": f"{from_name} <{from_email}>",
-                "to": [lead.email],
-                "subject": subject,
-                "html": html_content,
-            }
-            
-            # Send via Resend
-            response = resend.Emails.send(params)
-            
-            # Wait human delay
+        # Delegate to unified _send_single with per-user API key and config
+        result = await self._send_single(lead, api_key=config.resend_api_key, config=config)
+        
+        # v8: solo delay si el envío fue exitoso (no desperdiciar tiempo en fallos)
+        if result.success:
             await self._human_delay()
-            
-            # Check for success
-            if response and response.get("id"):
-                log.success(f"Email enviado exitosamente a {lead.email}")
-                return EmailResult(
-                    lead_id=lead.id,
-                    success=True,
-                    resend_id=response["id"]
-                )
-            else:
-                error_msg = "Respuesta inesperada de Resend API"
-                log.error(f"Error enviando a {lead.email}: {error_msg}")
-                return EmailResult(
-                    lead_id=lead.id,
-                    success=False,
-                    error=error_msg
-                )
-                
-        except Exception as e:
-            error_msg = str(e)[:200]
-            log.error(f"Error enviando a {lead.email}: {error_msg}")
-            return EmailResult(
-                lead_id=lead.id,
-                success=False,
-                error=error_msg
-            )
-
-    def _render_template_with_config(self, lead: Lead, config: HunterConfig) -> str:
-        """
-        Render the email template with lead data and user config.
         
-        Args:
-            lead: Lead object with data to insert
-            config: User's HunterConfig with their settings
-            
-        Returns:
-            Rendered HTML string
-        """
-        # Extract company name
-        raw_domain = lead.domain.replace("https://", "").replace("http://", "").rstrip("/").split("/")[0]
-        company_name = lead.meta_title or raw_domain.split(".")[0].replace("-", " ").title()
-        
-        # Use user's settings
-        sender_name = config.from_name or os.getenv("SENDER_NAME", "El equipo de BotLode")
-        calendar_link = config.calendar_link or os.getenv("CALENDAR_LINK", "https://www.botlode.com")
-        from_email = config.from_email or self.from_email
-        
-        # Replace placeholders
-        html = self._template
-        html = html.replace("{{company_name}}", company_name)
-        html = html.replace("{{domain}}", lead.domain)
-        html = html.replace("{{email}}", lead.email or "")
-        html = html.replace("{{sender_name}}", sender_name)
-        html = html.replace("{{sender_email}}", from_email)
-        html = html.replace("{{calendar_link}}", calendar_link)
-        
-        return html
+        return result

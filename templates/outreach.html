@@ -3,7 +3,6 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Preview Email - BotLode Hunter</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
@@ -25,7 +24,7 @@
             box-shadow: 0 4px 40px rgba(212, 175, 55, 0.10);
         }
 
-        /* ── HEADER ── */
+        /* -- HEADER -- */
         .header {
             background: linear-gradient(145deg, #9A7B0A 0%, #B8860B 20%, #D4AF37 50%, #E8C547 80%, #D4AF37 100%);
             padding: 44px 30px 38px;
@@ -54,7 +53,7 @@
             line-height: 1.35;
         }
 
-        /* ── CONTENT ── */
+        /* -- CONTENT -- */
         .content {
             padding: 36px 32px;
             background: #ffffff;
@@ -78,7 +77,7 @@
             line-height: 1.7;
         }
 
-        /* ── HIGHLIGHT BOX ── */
+        /* -- HIGHLIGHT BOX -- */
         .highlight-box {
             background: linear-gradient(135deg, #FFFDF5 0%, #FFF9E6 100%);
             border-left: 4px solid #D4AF37;
@@ -93,7 +92,7 @@
             line-height: 1.6;
         }
 
-        /* ── BENEFITS ── */
+        /* -- BENEFITS -- */
         .benefits {
             margin: 28px 0;
         }
@@ -124,14 +123,7 @@
             color: #1a1a1a;
         }
 
-        /* ── DIVIDER ── */
-        .divider {
-            height: 1px;
-            background: linear-gradient(90deg, transparent 0%, #E8D5A0 50%, transparent 100%);
-            margin: 32px 0;
-        }
-
-        /* ── URGENCY BANNER ── */
+        /* -- URGENCY BANNER -- */
         .urgency {
             background: linear-gradient(135deg, #1a1a1a 0%, #222 100%);
             color: #D4AF37;
@@ -144,7 +136,7 @@
             letter-spacing: 1px;
         }
 
-        /* ── CTA SECTION ── */
+        /* -- CTA SECTION -- */
         .cta-section {
             background: linear-gradient(145deg, #FFFDF5 0%, #FFF8E1 50%, #FFFDF5 100%);
             border: 1px solid #E8D5A0;
@@ -195,7 +187,7 @@
             line-height: 1.5;
         }
 
-        /* ── SIGNATURE ── */
+        /* -- SIGNATURE -- */
         .signature {
             margin-top: 32px;
             padding-top: 24px;
@@ -219,7 +211,7 @@
             margin: 4px 0 0 0;
         }
 
-        /* ── FOOTER ── */
+        /* -- FOOTER -- */
         .footer {
             background: #111;
             color: #777;
@@ -246,34 +238,34 @@
         <!-- HEADER -->
         <div class="header">
             <p class="brand-name">BotLode</p>
-            <p class="brand-sub">Fábrica de Bots IA</p>
+            <p class="brand-sub">Fabrica de Bots IA</p>
             <p class="header-title">Tu competencia ya tiene un empleado<br>que nunca duerme</p>
         </div>
         
         <!-- CONTENT -->
         <div class="content">
-            <p class="greeting">Hola, <strong>TuEmpresa</strong>.</p>
-            <p class="body-text">Soy <strong>Manuel de Botlode</strong>.</p>
+            <p class="greeting">Hola, <strong>{{company_name}}</strong>.</p>
+            <p class="body-text">Soy <strong>{{sender_name}}</strong>.</p>
             
-            <p class="body-text">Estuve en tu web <strong>tuempresa.com</strong> y noté que no tenés un asistente virtual con inteligencia artificial.</p>
+            <p class="body-text">Estuve en tu web <strong>{{domain}}</strong> y note que no tenes un asistente virtual con inteligencia artificial.</p>
             
-            <p class="hook">¿Cuántos clientes perdés mientras dormís?<br>¿Y los fines de semana?</p>
+            <p class="hook">Cuantos clientes perdes mientras dormis?<br>Y los fines de semana?</p>
             
-            <p class="body-text">Mientras leés esto, hay empresas de tu rubro que ya tienen un <strong>bot con IA</strong> trabajando 24/7, 365 días al año, cerrando ventas sin descanso.</p>
+            <p class="body-text">Mientras lees esto, hay empresas de tu rubro que ya tienen un <strong>bot con IA</strong> trabajando 24/7, 365 dias al ano, cerrando ventas sin descanso.</p>
             
             <div class="highlight-box">
-                <p><strong>Lo mejor:</strong> Este bot no solo responde preguntas. Te avisa al instante cuando un visitante muestra interés real para que cierres la venta en el momento justo.</p>
+                <p><strong>Lo mejor:</strong> Este bot no solo responde preguntas. Te avisa al instante cuando un visitante muestra interes real para que cierres la venta en el momento justo.</p>
             </div>
             
             <!-- BENEFITS -->
             <div class="benefits">
                 <div class="benefit-item">
                     <div class="benefit-icon">💰</div>
-                    <div class="benefit-text"><strong>Se paga solo.</strong> Cada lead que captura vale más que su costo mensual.</div>
+                    <div class="benefit-text"><strong>Se paga solo.</strong> Cada lead que captura vale mas que su costo mensual.</div>
                 </div>
                 <div class="benefit-item">
                     <div class="benefit-icon">🎨</div>
-                    <div class="benefit-text"><strong>Tiene personalidad.</strong> Cambia de color según el modo: vendedor, técnico, enojado, feliz.</div>
+                    <div class="benefit-text"><strong>Tiene personalidad.</strong> Cambia de color segun el modo: vendedor, tecnico, enojado, feliz.</div>
                 </div>
                 <div class="benefit-item">
                     <div class="benefit-icon">⚡</div>
@@ -281,7 +273,7 @@
                 </div>
                 <div class="benefit-item">
                     <div class="benefit-icon">👀</div>
-                    <div class="benefit-text"><strong>Capta la atención.</strong> Sigue el mouse con la cabeza y engancha al visitante desde el segundo 1.</div>
+                    <div class="benefit-text"><strong>Capta la atencion.</strong> Sigue el mouse con la cabeza y engancha al visitante desde el segundo 1.</div>
                 </div>
                 <div class="benefit-item">
                     <div class="benefit-icon">📊</div>
@@ -289,30 +281,30 @@
                 </div>
             </div>
             
-            <div class="urgency">⏰ TUS COMPETIDORES YA LO ESTÁN USANDO</div>
+            <div class="urgency">⏰ TUS COMPETIDORES YA LO ESTAN USANDO</div>
             
             <!-- CTA -->
             <div class="cta-section">
                 <p class="cta-label">Demo gratuita</p>
-                <p class="cta-question">¿Querés verlo en acción?</p>
-                <p class="cta-sub">Comprobá en vivo cómo el bot interactúa con tus visitantes, captura leads y te notifica al instante.</p>
-                <a href="https://www.botlode.com/" class="cta-button" style="color: #ffffff !important; text-decoration: none;">VER DEMO EN VIVO</a>
+                <p class="cta-question">Queres verlo en accion?</p>
+                <p class="cta-sub">Comproba en vivo como el bot interactua con tus visitantes, captura leads y te notifica al instante.</p>
+                <a href="{{calendar_link}}" class="cta-button" style="color: #ffffff !important; text-decoration: none;">VER DEMO EN VIVO</a>
                 <p class="cta-trust">Sin compromiso · Se activa en 30 segundos · Sin tarjeta</p>
             </div>
             
             <!-- SIGNATURE -->
             <div class="signature">
-                <p class="sig-name">Manuel de Botlode</p>
+                <p class="sig-name">{{sender_name}}</p>
                 <p class="sig-role">Founder @ BotLode</p>
-                <p class="sig-tagline">El bot que vende mientras dormís</p>
+                <p class="sig-tagline">El bot que vende mientras dormis</p>
             </div>
         </div>
         
         <!-- FOOTER -->
         <div class="footer">
             <p class="footer-brand">BotLode</p>
-            <p style="margin: 8px 0;">Email enviado a <strong>contacto@tuempresa.com</strong> desde <strong>tuempresa.com</strong></p>
-            <p>Si no querés recibir más correos, respondé con la palabra <strong>REMOVER</strong>.</p>
+            <p style="margin: 8px 0;">Email enviado a <strong>{{email}}</strong> desde <strong>{{domain}}</strong></p>
+            <p>Si no queres recibir mas correos, responde con la palabra <strong>REMOVER</strong>.</p>
             <p style="margin-top: 12px;"><a href="https://www.botlode.com">www.botlode.com</a></p>
         </div>
     </div>

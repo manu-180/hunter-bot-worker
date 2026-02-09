@@ -15,7 +15,7 @@ import asyncio
 import os
 import signal
 import sys
-from datetime import datetime
+from time import time
 from typing import Optional
 
 from dotenv import load_dotenv
@@ -23,18 +23,40 @@ from dotenv import load_dotenv
 # Load environment variables first
 load_dotenv()
 
+from src.config import BotConfig
 from src.infrastructure.supabase_repo import SupabaseRepository
 from src.services.scraper import ScraperService
 from src.services.mailer import MailerService
 from src.services.hunter_logger import HunterLoggerService
 from src.utils.logger import log
+from src.utils.timezone import is_business_hours, format_argentina_time
 
-# =============================================================================
-# CONFIGURACIÓN DE HORARIO DE ENVÍO
-# =============================================================================
-BUSINESS_HOURS_START = 8   # 8 AM
-BUSINESS_HOURS_END = 21    # 9 PM (21:00) - EXTENDIDO +1h
-PAUSE_CHECK_INTERVAL = 300  # Revisar cada 5 minutos cuando está pausado
+# Centralized config (overrideable via env vars)
+BUSINESS_HOURS_START = BotConfig.BUSINESS_HOURS_START
+BUSINESS_HOURS_END = BotConfig.BUSINESS_HOURS_END
+PAUSE_CHECK_INTERVAL = BotConfig.PAUSE_CHECK_INTERVAL
+
+
+class TTLCache:
+    """Simple cache with time-to-live expiration to prevent unbounded growth."""
+    
+    def __init__(self, ttl_seconds: int = 300):
+        self._cache: dict = {}
+        self._ttl = ttl_seconds
+    
+    def get(self, key):
+        if key in self._cache:
+            value, timestamp = self._cache[key]
+            if time() - timestamp < self._ttl:
+                return value
+            del self._cache[key]
+        return None
+    
+    def set(self, key, value):
+        self._cache[key] = (value, time())
+    
+    def clear(self):
+        self._cache.clear()
 
 
 class LeadSniperWorker:
@@ -47,10 +69,10 @@ class LeadSniperWorker:
 
     def __init__(
         self,
-        scrape_batch_size: int = 10,  # ⚡ Aumentado de 5 a 10 dominios por batch
-        email_batch_size: int = 10,   # ⚡ Aumentado de 8 a 10 emails por batch
-        idle_sleep_seconds: int = 10,
-        heartbeat_interval: int = 60
+        scrape_batch_size: int = BotConfig.SCRAPE_BATCH_SIZE,
+        email_batch_size: int = BotConfig.EMAIL_BATCH_SIZE,
+        idle_sleep_seconds: int = BotConfig.IDLE_SLEEP_SECONDS,
+        heartbeat_interval: int = BotConfig.HEARTBEAT_INTERVAL,
     ) -> None:
         """
         Initialize the worker.
@@ -72,12 +94,11 @@ class LeadSniperWorker:
         self.mailer: Optional[MailerService] = None
         self.hunter_logger: Optional[HunterLoggerService] = None
         
-        # Cache for user configs
-        self._config_cache: dict = {}
+        # Cache for user configs (with TTL to prevent unbounded growth)
+        self._config_cache = TTLCache(ttl_seconds=BotConfig.CONFIG_CACHE_TTL)
         
         # Control flags
         self._running = False
-        self._cycles_since_heartbeat = 0
 
     async def initialize(self) -> None:
         """Initialize all services and connections."""
@@ -96,7 +117,7 @@ class LeadSniperWorker:
             
             self.scraper = ScraperService(
                 max_concurrent=self.scrape_batch_size,
-                timeout_seconds=20,
+                timeout_seconds=BotConfig.SCRAPE_TIMEOUT,
                 debug_mode=debug_mode
             )
             if debug_mode:
@@ -108,8 +129,8 @@ class LeadSniperWorker:
         
         try:
             self.mailer = MailerService(
-                min_delay=10,
-                max_delay=30
+                min_delay=BotConfig.EMAIL_MIN_DELAY,
+                max_delay=BotConfig.EMAIL_MAX_DELAY,
             )
             log.success("Servicio de email inicializado")
         except Exception as e:
@@ -127,12 +148,21 @@ class LeadSniperWorker:
         log.separator()
 
     async def shutdown(self) -> None:
-        """Gracefully shutdown all services."""
+        """Gracefully shutdown all services. Idempotent - safe to call multiple times."""
+        if not self._running and self.scraper is None:
+            return  # Already shut down
+        
         log.info("Cerrando servicios...")
         
         if self.scraper:
             await self.scraper.close()
+            self.scraper = None
             log.info("Scraper cerrado")
+        
+        if self.mailer:
+            await self.mailer.close()
+            self.mailer = None
+            log.info("Mailer cerrado")
         
         self._running = False
         log.success("Worker detenido correctamente")
@@ -144,6 +174,11 @@ class LeadSniperWorker:
         Returns:
             Number of domains processed
         """
+        # Límite warm-up: si ya se enviaron los emails máximos, no seguir sumando a la cola
+        sent_count = self.repo.get_sent_count()
+        if sent_count >= BotConfig.MAX_TOTAL_EMAILS_SENT:
+            return 0
+        
         # Fetch pending domains from all users
         pending_leads = self.repo.fetch_pending_domains_all_users(limit=self.scrape_batch_size)
         
@@ -165,10 +200,13 @@ class LeadSniperWorker:
         # Scrape all domains
         results = await self.scraper.scrape_batch(pending_leads)
         
+        # Build O(1) lookup dict instead of O(n) search per result
+        leads_by_id = {l.id: l for l in pending_leads}
+        
         # Update database with results and log for each user
         for result in results:
-            # Get the lead to access user_id
-            lead = next((l for l in pending_leads if l.id == result.lead_id), None)
+            # Get the lead to access user_id (O(1) lookup)
+            lead = leads_by_id.get(result.lead_id)
             user_id = str(lead.user_id) if lead and lead.user_id else None
             
             if result.success:
@@ -210,11 +248,14 @@ class LeadSniperWorker:
         return len(pending_leads)
 
     def _get_user_config(self, user_id: str):
-        """Get user config from cache or database."""
-        if user_id not in self._config_cache:
-            config = self.repo.get_user_config(user_id)
-            self._config_cache[user_id] = config
-        return self._config_cache.get(user_id)
+        """Get user config from TTL cache or database."""
+        cached = self._config_cache.get(user_id)
+        if cached is not None:
+            return cached
+        config = self.repo.get_user_config(user_id)
+        if config is not None:
+            self._config_cache.set(user_id, config)
+        return config
 
     async def _process_emails(self) -> int:
         """
@@ -222,19 +263,31 @@ class LeadSniperWorker:
         
         Each user's emails are sent with their own Resend API key.
         
-        HORARIO INTELIGENTE: Solo envía emails entre 8 AM - 7 PM (hora Argentina)
+        HORARIO INTELIGENTE: Solo envía emails entre 8 AM - 18:00 (hora Argentina)
         para maximizar tasa de apertura y mantener profesionalismo.
+        
+        LÍMITE WARM-UP: Si ya se enviaron MAX_TOTAL_EMAILS_SENT (p. ej. 20), no se
+        envían más emails para que Outlook/Gmail confíen en el dominio.
         
         Returns:
             Number of emails processed
         """
-        # 🕐 VERIFICAR HORARIO LABORAL (8 AM - 7 PM)
-        if not is_business_hours():
-            # Calcular hora actual en Argentina para mostrar en log
-            utc_now = datetime.utcnow()
-            argentina_hour = (utc_now.hour - 3) % 24
+        # Reencolar leads warm-up enviados hace +24h para volver a enviarles al día siguiente
+        self.repo.requeue_old_warmup_leads(hours=24)
+
+        # Límite warm-up: no superar el tope de emails enviados (p. ej. 20)
+        sent_count = self.repo.get_sent_count()
+        if sent_count >= BotConfig.MAX_TOTAL_EMAILS_SENT:
+            log.info(
+                f"⏸️ Límite warm-up alcanzado ({sent_count}/{BotConfig.MAX_TOTAL_EMAILS_SENT} enviados). "
+                "No se envían más emails para confianza del dominio."
+            )
+            return 0
+        
+        # 🕐 VERIFICAR HORARIO LABORAL (DST-aware)
+        if not is_business_hours(BUSINESS_HOURS_START, BUSINESS_HOURS_END):
             log.warning(
-                f"⏸️  FUERA DE HORARIO LABORAL (hora Argentina: {argentina_hour:02d}:00). "
+                f"⏸️  FUERA DE HORARIO LABORAL (Argentina: {format_argentina_time()}). "
                 f"Pausando envío de emails hasta las {BUSINESS_HOURS_START}:00 AM..."
             )
             return 0  # No procesar emails, pero continuar el loop
@@ -273,6 +326,7 @@ class LeadSniperWorker:
             
             # Mark as sending (optimistic lock)
             if not self.repo.mark_as_sending(lead.id):
+                log.info(f"Lead {lead.id} ya siendo procesado, saltando")
                 continue  # Skip if already being processed
             
             # Log send start
@@ -339,6 +393,15 @@ class LeadSniperWorker:
         self._running = True
         cycles_without_work = 0
         last_heartbeat = 0
+        error_streak = 0
+        
+        # Recover any leads stuck from previous crashes
+        try:
+            recovered = self.repo.recover_stuck_leads()
+            if recovered:
+                log.warning(f"Recuperados {recovered} leads stuck de sesión anterior")
+        except Exception as e:
+            log.warning(f"No se pudieron recuperar leads stuck: {e}")
         
         log.info("Worker iniciado - entrando en loop principal")
         log.separator()
@@ -363,14 +426,18 @@ class LeadSniperWorker:
                     await self._log_heartbeat()
                     last_heartbeat = 0
                 
+                # Reset error streak on successful cycle
+                error_streak = 0
+                
                 # Sleep if no work was done
                 if work_done == 0:
                     cycles_without_work += 1
                     
                     # Si estamos fuera de horario laboral, dormir más tiempo
-                    if not is_business_hours():
+                    if not is_business_hours(BUSINESS_HOURS_START, BUSINESS_HOURS_END):
                         if cycles_without_work == 1:
-                            log.info(f"⏸️  Fuera de horario laboral. Revisando cada {PAUSE_CHECK_INTERVAL}s...")
+                            log.info(f"⏸️  Fuera de horario laboral ({format_argentina_time()}). "
+                                     f"Revisando cada {PAUSE_CHECK_INTERVAL}s...")
                         await asyncio.sleep(PAUSE_CHECK_INTERVAL)
                     else:
                         if cycles_without_work == 1:
@@ -383,45 +450,22 @@ class LeadSniperWorker:
                 log.warning("Interrupción recibida, cerrando...")
                 break
             except Exception as e:
-                log.error(f"Error en el loop principal: {e}")
-                # Wait before retrying to avoid tight error loops
-                await asyncio.sleep(5)
+                error_streak += 1
+                backoff = min(BotConfig.ERROR_BACKOFF_BASE * (2 ** min(error_streak, 5)),
+                              BotConfig.ERROR_BACKOFF_MAX)
+                log.error(f"Error en loop principal (streak {error_streak}): {e}")
+                log.info(f"⏳ Backoff exponencial: {backoff:.0f}s")
+                await asyncio.sleep(backoff)
         
         await self.shutdown()
 
 
-def is_business_hours() -> bool:
-    """
-    Verifica si estamos en horario laboral (8 AM - 7 PM).
-    
-    IMPORTANTE: Railway corre en UTC, pero queremos horario de Argentina (UTC-3).
-    Ajustamos automáticamente para que los emails se envíen en horario local.
-    
-    Returns:
-        True si estamos en horario laboral, False si no
-    """
-    # Railway usa UTC, Argentina es UTC-3
-    # Por ejemplo: 11:00 UTC = 08:00 Argentina
-    utc_now = datetime.utcnow()
-    utc_hour = utc_now.hour
-    
-    # Convertir UTC a hora de Argentina (UTC-3)
-    argentina_hour = (utc_hour - 3) % 24
-    
-    # Verificar si estamos entre 8 AM y 7 PM (hora Argentina)
-    in_business_hours = BUSINESS_HOURS_START <= argentina_hour < BUSINESS_HOURS_END
-    
-    return in_business_hours
+# is_business_hours() imported from src.utils.timezone (handles DST correctly)
 
 
 async def main() -> None:
     """Entry point for the worker."""
-    worker = LeadSniperWorker(
-        scrape_batch_size=5,
-        email_batch_size=3,
-        idle_sleep_seconds=10,
-        heartbeat_interval=60
-    )
+    worker = LeadSniperWorker()
     
     # Handle shutdown signals
     loop = asyncio.get_event_loop()
@@ -439,7 +483,7 @@ async def main() -> None:
         await worker.run()
     except KeyboardInterrupt:
         log.warning("Interrupción por teclado")
-    finally:
+        # Only shutdown here if run() didn't complete its own shutdown
         await worker.shutdown()
 
 

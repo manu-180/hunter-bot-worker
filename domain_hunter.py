@@ -224,7 +224,7 @@ class DomainHunter:
                     return self._extract_domain(real_url)
             else:
                 return self._extract_domain(link)
-        except:
+        except (ValueError, KeyError, IndexError):
             return ""
     
     def _extract_domain(self, url: str) -> str:
@@ -239,7 +239,7 @@ class DomainHunter:
                 domain = domain[4:]
             
             return domain
-        except:
+        except (ValueError, AttributeError):
             return ""
     
     def _is_valid_domain(self, domain: str) -> bool:

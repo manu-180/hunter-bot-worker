@@ -10,8 +10,9 @@ beautifulsoup4>=4.12.0
 lxml>=5.0.0  # Fast HTML parser for BeautifulSoup
 google-search-results>=2.4.0  # SerpAPI for domain hunting
 
-# Email
+# Email (httpx for async, thread-safe per-request API key)
 resend>=0.7.0
+httpx>=0.27.0
 
 # Data Validation
 pydantic>=2.0.0

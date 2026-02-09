@@ -32,7 +32,7 @@ CIUDADES_ARGENTINA = [
     "Saladillo", "Bolívar", "Daireaux", "Guaminí", "Trenque Lauquen",
     "General Villegas", "Lincoln", "General Pinto", "Rojas", "Salto",
     "Carmen de Areco", "Chacabuco", "Lobos", "Roque Pérez", "San Andrés de Giles",
-    "Alberti", "Bragado", "Carlos Casares", "Colón", "General Arenales",
+    "Alberti", "Carlos Casares", "Colón", "General Arenales",
     
     # Córdoba (50 ciudades)
     "Córdoba", "Villa María", "Río Cuarto", "San Francisco", "Villa Carlos Paz",
@@ -585,7 +585,7 @@ CIUDADES_PERU = [
     "San Isidro",
     
     # Arequipa (20 ciudades)
-    "Arequipa", "Cayma", "Cerro Colorado", "Paucarpata", "Hunter",
+    "Arequipa", "Cayma", "Cerro Colorado", "Paucarpata", "Jacobo Hunter",
     "Socabaya", "Yanahuara", "Miraflores", "Characato", "Tiabaya",
     "Mollendo", "Camaná", "Aplao", "Cotahuasi", "La Joya",
     "Chivay", "Caylloma", "Islay", "Cocachacra", "Mejía",
@@ -968,8 +968,102 @@ PAISES = list(CIUDADES_POR_PAIS.keys())
 TOTAL_CIUDADES = sum(len(ciudades) for ciudades in CIUDADES_POR_PAIS.values())
 TOTAL_PAISES = len(PAISES)
 
-print(f"Base de datos de ciudades cargada:")
-print(f"  - {TOTAL_PAISES} países")
-print(f"  - {TOTAL_CIUDADES} ciudades en total")
-print(f"  - Argentina (primero): {len(CIUDADES_ARGENTINA)} ciudades")
-print(f"  - Brasil: EXCLUIDO (idioma portugués)")
+# Nota: los prints se eliminaron para evitar output en cada import.
+# Las estadísticas se loguean desde domain_hunter_worker.py al iniciar.
+
+# =============================================================================
+# COORDENADAS GPS para Google Maps API (top 80 ciudades LATAM)
+# Formato: "lat,lng" — usado con parámetro ll=@lat,lng,14z en SerpAPI Maps
+# Para ciudades no listadas, SerpAPI geocodifica automáticamente via location
+# =============================================================================
+CITY_COORDINATES = {
+    # Argentina
+    "Buenos Aires": "-34.6037,-58.3816",
+    "Córdoba": "-31.4201,-64.1888",
+    "Rosario": "-32.9468,-60.6393",
+    "Mendoza": "-32.8895,-68.8458",
+    "San Miguel de Tucumán": "-26.8083,-65.2176",
+    "La Plata": "-34.9215,-57.9545",
+    "Mar del Plata": "-38.0055,-57.5426",
+    "Salta": "-24.7829,-65.4232",
+    "Santa Fe": "-31.6333,-60.7000",
+    "San Salvador de Jujuy": "-24.1858,-65.2995",
+    "Resistencia": "-27.4513,-59.0486",
+    "Posadas": "-27.3671,-55.8961",
+    "Neuquén": "-38.9516,-68.0591",
+    "Bahía Blanca": "-38.7183,-62.2663",
+    "Paraná": "-31.7413,-60.5115",
+    # México
+    "Ciudad de México": "19.4326,-99.1332",
+    "Guadalajara": "20.6597,-103.3496",
+    "Monterrey": "25.6866,-100.3161",
+    "Puebla": "19.0414,-98.2063",
+    "Tijuana": "32.5149,-117.0382",
+    "León": "21.1250,-101.6860",
+    "Mérida": "20.9674,-89.5926",
+    "Querétaro": "20.5888,-100.3899",
+    "Cancún": "21.1619,-86.8515",
+    "Aguascalientes": "21.8853,-102.2916",
+    # Colombia
+    "Bogotá": "4.7110,-74.0721",
+    "Medellín": "6.2442,-75.5812",
+    "Cali": "3.4516,-76.5320",
+    "Barranquilla": "10.9639,-74.7964",
+    "Cartagena": "10.3910,-75.5144",
+    "Bucaramanga": "7.1254,-73.1198",
+    "Pereira": "4.8087,-75.6906",
+    "Santa Marta": "11.2408,-74.1990",
+    # Chile
+    "Santiago": "-33.4489,-70.6693",
+    "Valparaíso": "-33.0472,-71.6127",
+    "Concepción": "-36.8270,-73.0498",
+    "Viña del Mar": "-33.0153,-71.5500",
+    "Antofagasta": "-23.6509,-70.3975",
+    "Temuco": "-38.7359,-72.5904",
+    "La Serena": "-29.9027,-71.2519",
+    # Perú
+    "Lima": "-12.0464,-77.0428",
+    "Arequipa": "-16.4090,-71.5375",
+    "Trujillo": "-8.1091,-79.0215",
+    "Cusco": "-13.5320,-71.9675",
+    "Chiclayo": "-6.7714,-79.8409",
+    "Piura": "-5.1945,-80.6328",
+    "Huancayo": "-12.0651,-75.2049",
+    # Ecuador
+    "Quito": "-0.1807,-78.4678",
+    "Guayaquil": "-2.1710,-79.9224",
+    "Cuenca": "-2.9001,-79.0059",
+    "Ambato": "-1.2491,-78.6168",
+    "Manta": "-0.9498,-80.7089",
+    # Venezuela
+    "Caracas": "10.4806,-66.9036",
+    "Maracaibo": "10.6544,-71.6290",
+    "Valencia": "10.1620,-67.9911",
+    "Barquisimeto": "10.0678,-69.3474",
+    # Bolivia
+    "La Paz": "-16.4897,-68.1193",
+    "Santa Cruz de la Sierra": "-17.7834,-63.1822",
+    "Cochabamba": "-17.3895,-66.1568",
+    # Paraguay
+    "Asunción": "-25.2637,-57.5759",
+    "Ciudad del Este": "-25.5097,-54.6114",
+    # Uruguay
+    "Montevideo": "-34.9011,-56.1645",
+    "Salto": "-31.3833,-57.9500",
+    "Paysandú": "-32.3214,-58.0756",
+    # Costa Rica
+    "San José": "9.9281,-84.0907",
+    # Panamá
+    "Ciudad de Panamá": "8.9824,-79.5199",
+    # Guatemala
+    "Ciudad de Guatemala": "14.6349,-90.5069",
+    # Honduras
+    "Tegucigalpa": "14.0723,-87.1921",
+    # El Salvador
+    "San Salvador": "13.6929,-89.2182",
+    # Nicaragua
+    "Managua": "12.1150,-86.2362",
+    # República Dominicana
+    "Santo Domingo": "18.4861,-69.9312",
+    "Santiago de los Caballeros": "19.4517,-70.6970",
+}

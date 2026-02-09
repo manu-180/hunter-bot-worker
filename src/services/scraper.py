@@ -34,30 +34,25 @@ class ScraperService:
         re.IGNORECASE
     )
 
-    # Patterns to identify junk/invalid emails
-    JUNK_PATTERNS = [
-        r'\.png',
-        r'\.jpg',
-        r'\.jpeg',
-        r'\.gif',
-        r'\.svg',
-        r'\.webp',
-        r'@2x',
-        r'@3x',
-        r'sentry',
-        r'example\.com',
-        r'example\.org',
-        r'test\.com',
-        r'localhost',
-        r'wixpress',
-        r'wix\.com',
-        r'wordpress',
-        r'@sentry',
-        r'noreply',
-        r'no-reply',
-        r'mailer-daemon',
+    # v8: regex junk compilado una sola vez (antes era loop con re.search por cada pattern)
+    # Unir todos los patterns en un solo regex alternado para O(1) matching
+    JUNK_REGEX = re.compile(
+        r'\.(?:png|jpg|jpeg|gif|svg|webp)|'
+        r'@[23]x|'
+        r'sentry|'
+        r'example\.(?:com|org)|'
+        r'test\.com|'
+        r'localhost|'
+        r'wixpress|'
+        r'wix\.com|'
+        r'wordpress|'
+        r'@sentry|'
+        r'noreply|'
+        r'no-reply|'
+        r'mailer-daemon|'
         r'postmaster',
-    ]
+        re.IGNORECASE
+    )
 
     # Keywords to identify contact/about pages
     CONTACT_KEYWORDS = [
@@ -100,13 +95,14 @@ class ScraperService:
         self.timeout_ms = timeout_seconds * 1000
         self.semaphore = asyncio.Semaphore(max_concurrent)
         self._browser: Optional[Browser] = None
+        self._playwright = None  # Store playwright instance to close it properly
         self.debug_mode = debug_mode
 
     async def _get_browser(self) -> Browser:
         """Get or create the browser instance."""
         if self._browser is None or not self._browser.is_connected():
-            playwright = await async_playwright().start()
-            self._browser = await playwright.chromium.launch(
+            self._playwright = await async_playwright().start()
+            self._browser = await self._playwright.chromium.launch(
                 headless=True,
                 args=[
                     '--disable-blink-features=AutomationControlled',
@@ -117,10 +113,13 @@ class ScraperService:
         return self._browser
 
     async def close(self) -> None:
-        """Close the browser instance."""
+        """Close the browser and playwright instances to prevent resource leaks."""
         if self._browser and self._browser.is_connected():
             await self._browser.close()
             self._browser = None
+        if self._playwright:
+            await self._playwright.stop()
+            self._playwright = None
 
     def _save_debug_html(self, domain: str, html: str, page_type: str = "homepage") -> None:
         """
@@ -151,9 +150,34 @@ class ScraperService:
         except Exception as e:
             log.warning(f"No se pudo guardar HTML de debug: {str(e)}")
 
+    # Prefixes that indicate a generic/role-based email (not a named person)
+    GENERIC_EMAIL_PREFIXES = frozenset({
+        'info', 'admin', 'administracion', 'contacto', 'contact',
+        'hola', 'hello', 'soporte', 'support', 'ventas', 'sales',
+        'consultas', 'atencion', 'recepcion', 'general', 'office',
+        'webmaster', 'postmaster', 'billing', 'facturacion',
+        'rrhh', 'hr', 'marketing', 'prensa', 'press', 'media',
+        'legal', 'contabilidad', 'accounting', 'noreply', 'no-reply',
+    })
+
+    def _is_generic_email(self, email: str) -> bool:
+        """
+        Check if an email is generic/role-based (info@, admin@, etc.)
+        
+        Business-named emails (john@company.com) are higher quality leads
+        than generic role addresses (info@company.com).
+        """
+        if not email or '@' not in email:
+            return True
+        local = email.split('@')[0].lower().strip()
+        return local in self.GENERIC_EMAIL_PREFIXES
+
     def _is_junk_email(self, email: str) -> bool:
         """
         Check if an email matches junk patterns.
+        
+        v8: Usa regex compilado único en vez de loop con re.search por cada pattern.
+        Antes: O(n) llamadas a re.search. Ahora: 1 llamada a re.search.
         
         Args:
             email: Email address to check
@@ -161,11 +185,7 @@ class ScraperService:
         Returns:
             True if email is junk, False otherwise
         """
-        email_lower = email.lower()
-        for pattern in self.JUNK_PATTERNS:
-            if re.search(pattern, email_lower):
-                return True
-        return False
+        return bool(self.JUNK_REGEX.search(email))
 
     def _extract_emails(self, html: str) -> Set[str]:
         """
@@ -436,20 +456,12 @@ class ScraperService:
                 log.scraping(f"Iniciando scraping: {domain}")
                 
                 # Navigate to homepage
-                await page.goto(url, timeout=self.timeout_ms, wait_until='load')  # ⚡ 'load' es más rápido que 'networkidle'
+                await page.goto(url, timeout=self.timeout_ms, wait_until='load')
                 
-                # Wait a bit for any delayed JS
-                await asyncio.sleep(0.8)  # ⚡ Reducido de 2s a 0.8s
+                # v8: minimal wait for JS init
+                await asyncio.sleep(0.5)
                 
-                # Scroll down to trigger lazy loading
-                await page.evaluate('window.scrollTo(0, document.body.scrollHeight)')
-                await asyncio.sleep(0.4)  # ⚡ Reducido de 1s a 0.4s
-                
-                # Scroll back up
-                await page.evaluate('window.scrollTo(0, 0)')
-                await asyncio.sleep(0.2)  # ⚡ Reducido de 0.5s a 0.2s
-                
-                # Get homepage content
+                # Get homepage content (sin scroll primero)
                 html = await page.content()
                 self._save_debug_html(domain, html, "homepage")
                 
@@ -461,11 +473,25 @@ class ScraperService:
                 # Extract title
                 title = self._extract_title(html)
                 
-                # Use advanced extraction for SPAs, simple for regular sites
+                # v8: intentar extraer emails SIN scroll primero
                 if is_spa:
                     homepage_emails = await self._extract_emails_from_page(page)
                 else:
                     homepage_emails = self._extract_emails(html)
+                
+                # v8: LAZY SCROLL — solo si no encontramos emails en el HTML inicial
+                if not homepage_emails:
+                    await page.evaluate('window.scrollTo(0, document.body.scrollHeight)')
+                    await asyncio.sleep(0.3)
+                    await page.evaluate('window.scrollTo(0, 0)')
+                    await asyncio.sleep(0.2)
+                    
+                    # Re-extract después del scroll
+                    html = await page.content()
+                    if is_spa:
+                        homepage_emails = await self._extract_emails_from_page(page)
+                    else:
+                        homepage_emails = self._extract_emails(html)
                 
                 all_emails.update(homepage_emails)
                 
@@ -473,21 +499,29 @@ class ScraperService:
                 if self.debug_mode and homepage_emails:
                     log.info(f"Emails en homepage: {', '.join(list(homepage_emails)[:3])}")
                 
-                # ⚡ Early exit: si encontramos email en homepage, limitar búsqueda en páginas de contacto
+                # ⚡ Early exit mejorado v7: distinguir emails genéricos de emails de negocio
                 contact_links = []
-                if not homepage_emails:
-                    # Solo buscar en páginas de contacto si NO encontramos email en homepage
+                has_business_email = homepage_emails and not all(
+                    self._is_generic_email(e) for e in homepage_emails
+                )
+                
+                if has_business_email:
+                    # Emails de negocio reales encontrados — no navegar a /contacto
+                    log.info(f"⚡ Email de negocio en homepage, saltando contacto")
+                elif not homepage_emails:
+                    # Sin emails — buscar en páginas de contacto
                     contact_links = await self._find_contact_links(page)
                     
-                    # If no links found and it's a SPA, try common paths
                     if not contact_links and is_spa:
-                        log.info(f"Sin links en SPA, probando rutas comunes...")
                         base_url = url.rstrip('/')
                         contact_links = [f"{base_url}{path}" for path in self.COMMON_CONTACT_PATHS]
                     
                     log.info(f"Probando {len(contact_links)} URLs de contacto en {domain}")
                 else:
-                    log.info(f"⚡ Email encontrado en homepage, saltando búsqueda de contacto")
+                    # Solo emails genéricos — intentar encontrar uno mejor en contacto
+                    contact_links = await self._find_contact_links(page)
+                    contact_links = contact_links[:2]  # Limitar a 2 intentos
+                    log.info(f"Solo emails genéricos, probando {len(contact_links)} contactos")
                 
                 for contact_url in contact_links:
                     try:
@@ -504,12 +538,8 @@ class ScraperService:
                             log.info(f"  ↳ Página no existe (HTTP {response.status})")
                             continue
                         
-                        # Wait for JS
-                        await asyncio.sleep(0.6)  # ⚡ Reducido de 1.5s a 0.6s
-                        
-                        # Scroll to load everything
-                        await page.evaluate('window.scrollTo(0, document.body.scrollHeight)')
-                        await asyncio.sleep(0.2)  # ⚡ Reducido de 0.5s a 0.2s
+                        # v8: wait reducido para páginas de contacto
+                        await asyncio.sleep(0.4)
                         
                         html = await page.content()
                         
