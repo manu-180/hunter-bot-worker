@@ -174,8 +174,8 @@ class LeadSniperWorker:
         Returns:
             Number of domains processed
         """
-        # Límite warm-up: si ya se enviaron los emails máximos, no seguir sumando a la cola
-        sent_count = self.repo.get_sent_count()
+        # Límite warm-up: solo cuenta envíos a dominios warm-up (warmup-*.getbotlode.com)
+        sent_count = self.repo.get_sent_count(warmup_only=True)
         if sent_count >= BotConfig.MAX_TOTAL_EMAILS_SENT:
             return 0
         
@@ -275,8 +275,8 @@ class LeadSniperWorker:
         # Reencolar leads warm-up enviados hace +24h para volver a enviarles al día siguiente
         self.repo.requeue_old_warmup_leads(hours=24)
 
-        # Límite warm-up: no superar el tope de emails enviados (p. ej. 20)
-        sent_count = self.repo.get_sent_count()
+        # Límite warm-up: solo cuenta envíos a dominios warm-up (warmup-*.getbotlode.com)
+        sent_count = self.repo.get_sent_count(warmup_only=True)
         if sent_count >= BotConfig.MAX_TOTAL_EMAILS_SENT:
             log.info(
                 f"⏸️ Límite warm-up alcanzado ({sent_count}/{BotConfig.MAX_TOTAL_EMAILS_SENT} enviados). "

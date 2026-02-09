@@ -500,11 +500,12 @@ class DomainHunterWorker:
             return self._cached_credits_left
     
     def _get_sent_count(self) -> int:
-        """Total de emails ya enviados (status='sent'). Para límite warm-up."""
+        """Emails enviados solo en dominios warm-up (warmup-*). Para límite warm-up."""
         try:
             response = self.supabase.table("leads")\
                 .select("id", count="exact")\
                 .eq("status", "sent")\
+                .like("domain", "warmup-%")\
                 .execute()
             return response.count or 0
         except Exception as e:
@@ -526,8 +527,8 @@ class DomainHunterWorker:
                 sent_count = self._get_sent_count()
                 if sent_count >= BotConfig.MAX_TOTAL_EMAILS_SENT:
                     log.info(
-                        f"⏸️ Límite warm-up alcanzado ({sent_count}/{BotConfig.MAX_TOTAL_EMAILS_SENT} enviados). "
-                        "No se buscan más dominios."
+                        f"⏸️ Límite warm-up alcanzado ({sent_count}/{BotConfig.MAX_TOTAL_EMAILS_SENT} enviados warm-up). "
+                        "No se buscan más dominios hasta mañana."
                     )
                     await asyncio.sleep(PAUSE_CHECK_INTERVAL)
                     continue

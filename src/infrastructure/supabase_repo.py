@@ -349,15 +349,17 @@ class SupabaseRepository:
             log.error(f"Error en get_stats: {e}")
             return {status.value: 0 for status in LeadStatus}
 
-    def get_sent_count(self, user_id: Optional[str] = None) -> int:
+    def get_sent_count(self, user_id: Optional[str] = None, warmup_only: bool = False) -> int:
         """
         Total de emails ya enviados (status='sent').
         
-        Se usa para el límite de warm-up: una vez alcanzado MAX_TOTAL_EMAILS_SENT,
-        el bot deja de buscar dominios y de enviar más emails.
+        Se usa para el límite de warm-up: una vez alcanzado MAX_TOTAL_EMAILS_SENT
+        en leads de warm-up, el bot deja de enviar más emails de warm-up (el resto
+        de dominios no se ve afectado).
         
         Args:
             user_id: Si se pasa, cuenta solo los de ese usuario; si None, cuenta global.
+            warmup_only: Si True, solo cuenta leads con domain LIKE 'warmup-%'.
         
         Returns:
             Número de leads con status 'sent'
@@ -370,6 +372,8 @@ class SupabaseRepository:
             )
             if user_id:
                 q = q.eq("user_id", user_id)
+            if warmup_only:
+                q = q.like("domain", "warmup-%")
             response = q.execute()
             return response.count or 0
         except Exception as e:
