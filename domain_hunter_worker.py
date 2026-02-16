@@ -879,7 +879,12 @@ class DomainHunterWorker:
                             counts["sitelinks"] += 1
         
         # SOURCE 2: Local Results (Google Maps pack)
-        for local in search.get("local_results", []):
+        local_results = search.get("local_results", [])
+        if isinstance(local_results, dict):
+            local_results = local_results.get("places", [])
+        for local in local_results:
+            if not isinstance(local, dict):
+                continue
             website = local.get("website")
             if website:
                 d = self._extract_domain(website)
@@ -898,6 +903,8 @@ class DomainHunterWorker:
         
         # SOURCE 4: Related Results
         for rel in search.get("related_results", []):
+            if not isinstance(rel, dict):
+                continue
             r_link = rel.get("link")
             if r_link:
                 d = self._extract_domain(r_link)
@@ -907,6 +914,8 @@ class DomainHunterWorker:
         
         # SOURCE 5: Ads (anuncios pagados = negocios REALES con presupuesto)
         for ad in search.get("ads", []):
+            if not isinstance(ad, dict):
+                continue
             ad_link = ad.get("link") or ad.get("tracking_link", "")
             if ad_link:
                 d = self._extract_domain(ad_link)
@@ -916,6 +925,8 @@ class DomainHunterWorker:
         
         # SOURCE 6: Places Results (Maps embebido en web search)
         for place in search.get("places_results", []):
+            if not isinstance(place, dict):
+                continue
             p_link = place.get("website") or place.get("link", "")
             if p_link:
                 d = self._extract_domain(p_link)
@@ -927,6 +938,8 @@ class DomainHunterWorker:
         inline_local = search.get("local_results", {})
         if isinstance(inline_local, dict):
             for place in inline_local.get("places", []):
+                if not isinstance(place, dict):
+                    continue
                 p_link = place.get("website") or place.get("link", "")
                 if p_link:
                     d = self._extract_domain(p_link)
@@ -944,7 +957,12 @@ class DomainHunterWorker:
         domains = set()
         total = 0
         
-        for result in search.get("local_results", []):
+        local_results = search.get("local_results", [])
+        if isinstance(local_results, dict):
+            local_results = local_results.get("places", [])
+        for result in local_results:
+            if not isinstance(result, dict):
+                continue
             website = result.get("website")
             if website:
                 d = self._extract_domain(website)

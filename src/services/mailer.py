@@ -61,7 +61,9 @@ class MailerService:
         if not self._default_api_key:
             raise ValueError("RESEND_API_KEY must be set in environment variables")
         
-        self.from_email = os.getenv("FROM_EMAIL", "manuel@getbotlode.com")
+        # Dominio de envío: getbotlode.com (verificado en Resend)
+        _env_from = os.getenv("FROM_EMAIL", "manuel@getbotlode.com")
+        self.from_email = self._normalize_from_email(_env_from) or "manuel@getbotlode.com"
         self.from_name = os.getenv("FROM_NAME", "Manuel de Botlode")
         self.min_delay = min_delay
         self.max_delay = max_delay
@@ -123,6 +125,19 @@ class MailerService:
         """Validate email format before sending."""
         return bool(EMAIL_REGEX.match(email))
 
+    # Dominio de envío (Resend); assistify.lat es viejo y no se usa
+    _FROM_EMAIL_DEFAULT = "manuel@getbotlode.com"
+
+    @classmethod
+    def _normalize_from_email(cls, email: Optional[str]) -> str:
+        """Asegura que el remitente use getbotlode.com; nunca assistify.lat."""
+        if not email or not email.strip():
+            return cls._FROM_EMAIL_DEFAULT
+        e = email.strip().lower()
+        if "assistify.lat" in e or "asstistify.lat" in e:
+            return cls._FROM_EMAIL_DEFAULT
+        return email.strip()
+
     # v8: placeholders del template para renderizado eficiente con loop
     _TEMPLATE_PLACEHOLDERS = (
         "{{company_name}}", "{{domain}}", "{{email}}",
@@ -151,11 +166,11 @@ class MailerService:
         # Determine sender settings from config or environment
         if config:
             sender_name = config.from_name or os.getenv("SENDER_NAME", self.from_name)
-            calendar_link = config.calendar_link or os.getenv("CALENDAR_LINK", "https://www.botlode.com")
-            from_email = config.from_email or self.from_email
+            calendar_link = config.calendar_link or os.getenv("CALENDAR_LINK", "https://www.botrive.com")
+            from_email = self._normalize_from_email(config.from_email or self.from_email) or self.from_email
         else:
             sender_name = os.getenv("SENDER_NAME", self.from_name)
-            calendar_link = os.getenv("CALENDAR_LINK", "https://www.botlode.com")
+            calendar_link = os.getenv("CALENDAR_LINK", "https://www.botrive.com")
             from_email = self.from_email
         
         # v8: dict mapping para renderizado eficiente
@@ -263,7 +278,7 @@ class MailerService:
             
             # Determine sender info
             if config:
-                from_email = config.from_email or self.from_email
+                from_email = self._normalize_from_email(config.from_email or self.from_email) or self.from_email
                 from_name = config.from_name or self.from_name
                 subject = config.email_subject or self._get_subject(lead)
             else:

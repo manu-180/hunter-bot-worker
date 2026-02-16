@@ -37,7 +37,7 @@ WHERE user_id = '38152119-7da4-442e-9826-20901c65f42e'
 --     sent_at = NULL,
 --     updated_at = NOW()
 -- WHERE user_id = '38152119-7da4-442e-9826-20901c65f42e'
---   AND domain = 'prueba-email-botlode.com';
+--   AND domain = 'prueba-email-getbotlode.com';
 
 -- Ver cuántos quedaron en cola (debería ser >= 1)
 -- SELECT id, domain, email, status, updated_at FROM leads

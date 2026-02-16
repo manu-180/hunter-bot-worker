@@ -89,7 +89,7 @@ El worker correrá indefinidamente, procesando:
 | `SUPABASE_URL` | Sí | URL de tu proyecto Supabase |
 | `SUPABASE_KEY` | Sí | API key de Supabase |
 | `RESEND_API_KEY` | Sí | API key de Resend |
-| `FROM_EMAIL` | Sí | Email remitente (ej: `manuel@botlode.com`, dominio verificado en Resend) |
+| `FROM_EMAIL` | Sí | Email remitente (ej: `manuel@getbotlode.com`, dominio verificado en Resend) |
 | `FROM_NAME` | No | Nombre del remitente (ej: `Manuel de Botlode`) |
 | `CALENDAR_LINK` | No | Link para agendar demos |
 
@@ -223,6 +223,11 @@ Railway: ~$5-10/mes (500 horas gratis, luego por uso)
 **Los dominios quedan en PENDIENTE:**
 - Verificar que `SUPABASE_KEY` sea la service_role key
 - Ejecutar `sql/fix_rls_policies.sql` en Supabase
+
+**Domain Hunter no busca dominios en deploy (logs: "Sin usuarios activos" o sin actividad):**
+- **Tras un reset de tablas:** `hunter_configs` y `domain_search_tracking` quedan vacíos. El Domain Hunter solo actúa para usuarios con `bot_enabled = true`. En Supabase: crear o actualizar al menos una fila en `hunter_configs` con tu `user_id` y `bot_enabled = true` (p. ej. `UPDATE hunter_configs SET bot_enabled = true WHERE user_id = 'tu-uuid';` o insertar una fila si no existe).
+- **Variables en el servicio correcto:** Las variables (`SERPAPI_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`) deben estar configuradas en el **servicio hunter-bot-worker** en Railway. Si solo están en otro servicio (p. ej. seeder-bot), el Domain Hunter no las ve.
+- **Revisar logs:** "SERPAPI_KEY no configurada" → añadir la key en Railway. "Sin usuarios activos" → asegurar que exista al menos un usuario con `bot_enabled = true` en `hunter_configs`.
 
 **Logs no aparecen en Botslode:**
 - Supabase → Database → Replication
