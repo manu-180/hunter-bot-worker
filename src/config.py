@@ -68,10 +68,9 @@ class BotConfig:
     MAX_CONCURRENT_USERS: int = _int("HUNTER_MAX_CONCURRENT_USERS", 3)
 
     # ── Límite total de emails (warm-up dominio) ──────────────────────────
-    # Para que Outlook/Gmail confíen en el dominio, limitar envíos al inicio.
-    # Una vez enviados MAX_TOTAL_EMAILS_SENT, el bot deja de buscar dominios
-    # y de enviar más emails hasta que se cambie o desactive el límite.
-    MAX_TOTAL_EMAILS_SENT: int = _int("HUNTER_MAX_TOTAL_EMAILS_SENT", 20)
+    # Solo cuenta envíos a dominios warmup-*.getbotlode.com. Una vez alcanzado,
+    # el bot deja de enviar hasta el día siguiente (requeue) o se sube el límite.
+    MAX_TOTAL_EMAILS_SENT: int = _int("HUNTER_MAX_TOTAL_EMAILS_SENT", 40)
 
     # ── Modo de email (lanzamiento vs completo) ────────────────────────────
     # "launch" = formato simple sin links para ganar confianza (primera semana).
