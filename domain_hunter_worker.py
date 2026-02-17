@@ -33,7 +33,7 @@ import random
 import time
 import traceback
 import urllib.request
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple, Any
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
@@ -301,6 +301,42 @@ FREE_PLATFORM_SUFFIXES: frozenset = frozenset({
     '.empretienda.com.ar', '.mitiendanube.com',
     '.mercadoshops.com.ar', '.dfrwk.com',
 })
+
+# =============================================================================
+# CLASIFICACIÓN EMPRESAS SIN DOMINIO (ventas_reservas vs landing_info)
+# SerpAPI Maps devuelve type / types; mapeamos a oferta de servicio web.
+# =============================================================================
+_CLASIF_VENTAS_KEYWORDS = frozenset({
+    "restaurant", "cafe", "bar", "hotel", "store", "shop", "retail",
+    "real_estate", "car_dealer", "travel_agency", "gym", "spa", "salon",
+    "dentist", "doctor", "clinic", "hospital", "pharmacy", "veterinar",
+    "auto", "rental", "booking", "food", "bakery", "florist", "jewelry",
+    "restaurant", "pizzeria", "panaderia", "inmobiliaria", "concesionaria",
+    "hotel", "cabaña", "alojamiento", "gimnasio", "peluqueria", "farmacia",
+})
+_CLASIF_LANDING_KEYWORDS = frozenset({
+    "lawyer", "attorney", "accountant", "consultant", "architect",
+    "designer", "photographer", "abogado", "contador", "consultor",
+    "arquitecto", "estudio", "asesor", "psicologo", "nutricionista",
+})
+
+def _clasificar_negocio(type_raw: Optional[str], types_list: Optional[List[str]]) -> Optional[str]:
+    """Mapea type/types de SerpAPI a ventas_reservas o landing_info. None si no se puede."""
+    combined = []
+    if type_raw:
+        combined.append(type_raw.lower().replace(" ", "_").replace("-", "_"))
+    if types_list:
+        for t in types_list:
+            if isinstance(t, str):
+                combined.append(t.lower().replace(" ", "_").replace("-", "_"))
+    text = " ".join(combined)
+    for kw in _CLASIF_VENTAS_KEYWORDS:
+        if kw in text:
+            return "ventas_reservas"
+    for kw in _CLASIF_LANDING_KEYWORDS:
+        if kw in text:
+            return "landing_info"
+    return None
 
 # =============================================================================
 # LISTAS DE ROTACIÓN AUTOMÁTICA
@@ -653,7 +689,7 @@ class DomainHunterWorker:
         try:
             if search_type == "maps":
                 domains_found = await self._search_via_maps(
-                    nicho, ciudad, pais, gl_code, template_idx, start_offset
+                    user_id, nicho, ciudad, pais, gl_code, template_idx, start_offset
                 )
                 log.info(
                     f"[{user_id[:8]}] 🗺️  Maps T{template_idx} S{start_offset} | {nicho} | {ciudad},{pais} | "
@@ -661,7 +697,7 @@ class DomainHunterWorker:
                 )
             else:
                 domains_found = await self._search_via_web(
-                    nicho, ciudad, pais, gl_code, template_idx, start_offset
+                    user_id, nicho, ciudad, pais, gl_code, template_idx, start_offset
                 )
                 log.info(
                     f"[{user_id[:8]}] 🌐 Web T{template_idx} S{start_offset} | {nicho} | {ciudad},{pais} | "
@@ -741,7 +777,7 @@ class DomainHunterWorker:
         
         self._search_results_cache[key] = (domains, time.time())
 
-    async def _search_via_web(self, nicho: str, ciudad: str, pais: str,
+    async def _search_via_web(self, user_id: str, nicho: str, ciudad: str, pais: str,
                               gl_code: str, template_idx: int,
                               start: int = 0) -> Set[str]:
         """Búsqueda web con extracción multi-source de 7 fuentes.
@@ -783,6 +819,7 @@ class DomainHunterWorker:
             return set()
         
         domains = self._extract_domains_from_web_response(search)
+        self._save_empresas_sin_dominio_from_web(search, user_id, nicho, ciudad, pais)
         
         # v8: almacenar en cache cross-user
         if domains:
@@ -793,13 +830,14 @@ class DomainHunterWorker:
         
         return domains
     
-    async def _search_via_maps(self, nicho: str, ciudad: str, pais: str,
+    async def _search_via_maps(self, user_id: str, nicho: str, ciudad: str, pais: str,
                                gl_code: str, template_idx: int,
                                start: int = 0) -> Set[str]:
         """Búsqueda en Google Maps — devuelve 20+ negocios con website directo.
         
         v8: soporte de paginación extendida (start=0/20/40/60) para extraer
         hasta 80 negocios por query. Cache cross-user incluido.
+        En paralelo guarda negocios sin website en empresas_sin_dominio.
         """
         template = QUERY_TEMPLATES_MAPS[template_idx % len(QUERY_TEMPLATES_MAPS)]
         query = template.format(nicho=nicho, ciudad=ciudad)
@@ -846,6 +884,7 @@ class DomainHunterWorker:
             return set()
         
         domains = self._extract_domains_from_maps_response(search)
+        self._save_empresas_sin_dominio_from_maps(search, user_id, nicho, ciudad, pais)
         
         # v8: almacenar en cache cross-user
         if domains:
@@ -972,6 +1011,100 @@ class DomainHunterWorker:
         
         log.info(f"  🗺️  Maps extraction: {total} con website → {len(domains)} únicos válidos")
         return domains
+
+    def _save_empresas_sin_dominio_from_maps(
+        self, search: dict, user_id: str, nicho: str, ciudad: str, pais: str
+    ) -> None:
+        """Extrae negocios SIN website de la respuesta Maps e inserta en empresas_sin_dominio."""
+        local_results = search.get("local_results", [])
+        if isinstance(local_results, dict):
+            local_results = local_results.get("places", [])
+        to_insert = []
+        for result in local_results:
+            if not isinstance(result, dict):
+                continue
+            if result.get("website"):
+                continue
+            title = (result.get("title") or "").strip()
+            if not title or len(title) < 2:
+                continue
+            address = (result.get("address") or "").strip() or None
+            phone = (result.get("phone") or "").strip() or None
+            type_raw = result.get("type") or result.get("type_id") or ""
+            types_list = result.get("types") or result.get("type_ids") or []
+            if isinstance(types_list, str):
+                types_list = [types_list]
+            clasif = _clasificar_negocio(type_raw, types_list)
+            type_str = type_raw if isinstance(type_raw, str) else str(types_list[:1] if types_list else "")
+            to_insert.append({
+                "user_id": user_id,
+                "nombre": title[:500],
+                "direccion": address[:500] if address else None,
+                "telefono": phone[:100] if phone else None,
+                "ciudad": ciudad[:200],
+                "pais": pais[:200],
+                "nicho": nicho[:200] if nicho else None,
+                "source": "hunter",
+                "clasificacion": clasif,
+                "type_raw": type_str[:200] if type_str else None,
+            })
+        if not to_insert:
+            return
+        saved = 0
+        for row in to_insert:
+            try:
+                self.supabase.table("empresas_sin_dominio").insert(row).execute()
+                saved += 1
+            except Exception as e:
+                if "duplicate" not in str(e).lower() and "unique" not in str(e).lower():
+                    log.warning(f"  ⚠️ empresas_sin_dominio Maps: {str(e)[:80]}")
+        if saved:
+            log.info(f"  📋 empresas_sin_dominio: {saved}/{len(to_insert)} sin web (Maps) → tabla")
+
+    def _save_empresas_sin_dominio_from_web(
+        self, search: dict, user_id: str, nicho: str, ciudad: str, pais: str
+    ) -> None:
+        """Extrae negocios SIN website de local_results y places_results (web) e inserta."""
+        to_insert = []
+        def add_place(place: dict) -> None:
+            if not isinstance(place, dict) or (place.get("website") or place.get("link")):
+                return
+            title = (place.get("title") or "").strip()
+            if not title or len(title) < 2:
+                return
+            to_insert.append({
+                "user_id": user_id,
+                "nombre": title[:500],
+                "direccion": (place.get("address") or "").strip()[:500] or None,
+                "telefono": (place.get("phone") or "").strip()[:100] or None,
+                "ciudad": ciudad[:200],
+                "pais": pais[:200],
+                "nicho": nicho[:200] if nicho else None,
+                "source": "hunter",
+                "clasificacion": _clasificar_negocio(place.get("type"), place.get("types") or []),
+                "type_raw": (str(place.get("type") or "")[:200]) or None,
+            })
+        lr = search.get("local_results")
+        if isinstance(lr, list):
+            for local in lr:
+                add_place(local)
+        elif isinstance(lr, dict):
+            for place in (lr.get("places") or []):
+                add_place(place)
+        for place in search.get("places_results", []) or []:
+            add_place(place)
+        if not to_insert:
+            return
+        saved = 0
+        for row in to_insert:
+            try:
+                self.supabase.table("empresas_sin_dominio").insert(row).execute()
+                saved += 1
+            except Exception as e:
+                if "duplicate" not in str(e).lower() and "unique" not in str(e).lower():
+                    log.warning(f"  ⚠️ empresas_sin_dominio Web: {str(e)[:80]}")
+        if saved:
+            log.info(f"  📋 empresas_sin_dominio: {saved}/{len(to_insert)} sin web (Web) → tabla")
     
     def _harvest_related_searches(self, search: dict) -> None:
         """Extrae related_searches de la respuesta de SerpAPI.
