@@ -174,11 +174,6 @@ class LeadSniperWorker:
         Returns:
             Number of domains processed
         """
-        # Límite warm-up: solo cuenta envíos a dominios warm-up (warmup-*.getbotlode.com)
-        sent_count = self.repo.get_sent_count(warmup_only=True)
-        if sent_count >= BotConfig.MAX_TOTAL_EMAILS_SENT:
-            return 0
-        
         # Fetch pending domains from all users
         pending_leads = self.repo.fetch_pending_domains_all_users(limit=self.scrape_batch_size)
         

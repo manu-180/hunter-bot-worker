@@ -42,6 +42,10 @@ from supabase import create_client, Client
 
 from src.config import BotConfig
 from src.utils.timezone import is_business_hours, format_argentina_time, format_utc_time, utc_now
+from src.web_verification import (
+    STRICT_NO_WEB_CHECK, STRICT_NO_WEB_MIN_CONFIDENCE,
+    batch_verify as _batch_verify_no_web,
+)
 
 # =============================================================================
 # CONFIGURACIÓN
@@ -76,7 +80,7 @@ PAUSE_CHECK_INTERVAL = BotConfig.PAUSE_CHECK_INTERVAL
 # Índices pares = web search, índices impares = Google Maps search.
 # =============================================================================
 QUERY_TEMPLATES_WEB = [
-    "{nicho} en {ciudad}",                                    # 0: Búsqueda directa
+    "{nicho} en {ciudad}",                                    # 0: Busqueda directa
     "{nicho} {ciudad} contacto email",                        # 1: Datos de contacto
     "mejores {nicho} {ciudad} 2025",                          # 2: Rankings actuales
     "{nicho} {ciudad} whatsapp telefono sitio web",           # 3: Negocios con presencia web
@@ -84,11 +88,15 @@ QUERY_TEMPLATES_WEB = [
     "{nicho} profesional {ciudad} presupuesto",               # 5: Intent comercial
     "{nicho} recomendados {ciudad} opiniones",                # 6: Reviews con negocios
     "empresas de {nicho} en {ciudad} servicios",              # 7: B2B intent
+    "{nicho} cerca de {ciudad} sitio web oficial",            # 8: Negocios con web oficial
+    "{nicho} nuevos {ciudad} 2025 2026",                      # 9: Negocios recientes
+    "directorio {nicho} {ciudad}",                            # 10: Listados con links a negocios
 ]
 
 QUERY_TEMPLATES_MAPS = [
     "{nicho} en {ciudad}",                                    # Query directa para Maps
     "{nicho} {ciudad}",                                       # Query corta para Maps
+    "mejores {nicho} {ciudad}",                               # Query con ranking para Maps
 ]
 
 # =============================================================================
@@ -100,17 +108,26 @@ QUERY_TEMPLATES_MAPS = [
 # =============================================================================
 SEARCH_SEQUENCE = [
     ("maps", 0, 0),     # Maps pag 1: ~20 negocios con website
-    ("web",  0, 0),     # Web directa: ~10 orgánicos + local pack + KG
-    ("maps", 0, 20),    # Maps pag 2: ~20 más
+    ("web",  0, 0),     # Web directa: ~10 organicos + local pack + KG
+    ("maps", 0, 20),    # Maps pag 2: ~20 mas
     ("web",  1, 0),     # Web "contacto email"
-    ("maps", 1, 40),    # Maps pag 3: ~20 más (query corta)
+    ("maps", 1, 40),    # Maps pag 3: ~20 mas (query corta)
     ("web",  2, 0),     # Web "mejores X 2025"
-    ("maps", 1, 60),    # Maps pag 4: ~20 más
+    ("maps", 1, 60),    # Maps pag 4: ~20 mas
     ("web",  3, 0),     # Web "whatsapp telefono sitio web"
+    ("maps", 2, 0),     # Maps pag 1 query ranking: ~20 negocios
     ("web",  4, 0),     # Web intitle: operador avanzado
-    ("web",  0, 10),    # Web directa pag 2: 10 orgánicos más
+    ("maps", 2, 20),    # Maps pag 2 query ranking: ~20 mas
+    ("web",  0, 10),    # Web directa pag 2: 10 organicos mas
+    ("maps", 0, 80),    # Maps pag 5: ~20 mas
     ("web",  5, 0),     # Web "profesional presupuesto"
+    ("maps", 0, 100),   # Maps pag 6: ~20 mas
+    ("web",  8, 0),     # Web "cerca de {ciudad} sitio web oficial"
+    ("web",  9, 0),     # Web "nuevos 2025 2026"
+    ("web",  10, 0),    # Web "directorio {nicho} {ciudad}"
     ("web",  1, 10),    # Web "contacto email" pag 2
+    ("web",  6, 0),     # Web "recomendados opiniones"
+    ("web",  7, 0),     # Web "empresas de X servicios"
 ]
 
 # Máximo de búsquedas a probar por combinación (cada una = 1 crédito)
@@ -559,22 +576,6 @@ class DomainHunterWorker:
                     await asyncio.sleep(CHECK_USERS_INTERVAL)
                     continue
                 
-                # Límite warm-up: si ya se enviaron los emails máximos, no buscar más dominios
-                sent_count = self._get_sent_count()
-                if sent_count >= BotConfig.MAX_TOTAL_EMAILS_SENT:
-                    log.info(
-                        f"⏸️ Límite warm-up alcanzado ({sent_count}/{BotConfig.MAX_TOTAL_EMAILS_SENT} enviados warm-up). "
-                        "No se buscan más dominios hasta mañana."
-                    )
-                    await asyncio.sleep(PAUSE_CHECK_INTERVAL)
-                    continue
-                
-                # Verificar horario laboral
-                if not is_business_hours(BUSINESS_HOURS_START, BUSINESS_HOURS_END):
-                    log.info(f"⏸️  Fuera de horario ({format_argentina_time()}). Pausa {PAUSE_CHECK_INTERVAL}s")
-                    await asyncio.sleep(PAUSE_CHECK_INTERVAL)
-                    continue
-                
                 # Pre-check de créditos periódico
                 if self._searches_since_credit_check >= BotConfig.CREDIT_CHECK_INTERVAL:
                     credits = await self._check_remaining_credits()
@@ -678,11 +679,6 @@ class DomainHunterWorker:
         # Determinar tipo de búsqueda según la secuencia v8 (tipo, template, start)
         seq_idx = current_page % len(SEARCH_SEQUENCE)
         search_type, template_idx, start_offset = SEARCH_SEQUENCE[seq_idx]
-        
-        # Guardia final de horario
-        if not is_business_hours(BUSINESS_HOURS_START, BUSINESS_HOURS_END):
-            log.info(f"🛡️ Guardia final: fuera de horario. No se gastará crédito.")
-            return []
         
         gl_code = PAIS_GL_CODE.get(pais, pais[:2].lower())
         
@@ -819,7 +815,7 @@ class DomainHunterWorker:
             return set()
         
         domains = self._extract_domains_from_web_response(search)
-        self._save_empresas_sin_dominio_from_web(search, user_id, nicho, ciudad, pais)
+        await self._save_empresas_sin_dominio_from_web(search, user_id, nicho, ciudad, pais)
         
         # v8: almacenar en cache cross-user
         if domains:
@@ -884,7 +880,7 @@ class DomainHunterWorker:
             return set()
         
         domains = self._extract_domains_from_maps_response(search)
-        self._save_empresas_sin_dominio_from_maps(search, user_id, nicho, ciudad, pais)
+        await self._save_empresas_sin_dominio_from_maps(search, user_id, nicho, ciudad, pais)
         
         # v8: almacenar en cache cross-user
         if domains:
@@ -1012,14 +1008,14 @@ class DomainHunterWorker:
         log.info(f"  🗺️  Maps extraction: {total} con website → {len(domains)} únicos válidos")
         return domains
 
-    def _save_empresas_sin_dominio_from_maps(
+    async def _save_empresas_sin_dominio_from_maps(
         self, search: dict, user_id: str, nicho: str, ciudad: str, pais: str
     ) -> None:
-        """Extrae negocios SIN website de la respuesta Maps e inserta en empresas_sin_dominio."""
+        """Extrae negocios SIN website de la respuesta Maps, verifica y guarda."""
         local_results = search.get("local_results", [])
         if isinstance(local_results, dict):
             local_results = local_results.get("places", [])
-        to_insert = []
+        candidates = []
         for result in local_results:
             if not isinstance(result, dict):
                 continue
@@ -1036,7 +1032,7 @@ class DomainHunterWorker:
                 types_list = [types_list]
             clasif = _clasificar_negocio(type_raw, types_list)
             type_str = type_raw if isinstance(type_raw, str) else str(types_list[:1] if types_list else "")
-            to_insert.append({
+            candidates.append({
                 "user_id": user_id,
                 "nombre": title[:500],
                 "direccion": address[:500] if address else None,
@@ -1048,31 +1044,45 @@ class DomainHunterWorker:
                 "clasificacion": clasif,
                 "type_raw": type_str[:200] if type_str else None,
             })
-        if not to_insert:
+        if not candidates:
             return
+
+        verified = await _batch_verify_no_web(self.serpapi_key, candidates)
         saved = 0
-        for row in to_insert:
+        skipped_has_web = 0
+        for row in verified:
+            if row.get("verification_status") == "has_web":
+                skipped_has_web += 1
+                continue
+            if (STRICT_NO_WEB_CHECK
+                    and row.get("verification_status") == "verified_no_web"
+                    and row.get("confidence_no_web", 0) < STRICT_NO_WEB_MIN_CONFIDENCE):
+                skipped_has_web += 1
+                continue
             try:
                 self.supabase.table("empresas_sin_dominio").insert(row).execute()
                 saved += 1
             except Exception as e:
                 if "duplicate" not in str(e).lower() and "unique" not in str(e).lower():
                     log.warning(f"  ⚠️ empresas_sin_dominio Maps: {str(e)[:80]}")
-        if saved:
-            log.info(f"  📋 empresas_sin_dominio: {saved}/{len(to_insert)} sin web (Maps) → tabla")
+        if saved or skipped_has_web:
+            log.info(
+                f"  📋 empresas_sin_dominio Maps: {saved} guardados, "
+                f"{skipped_has_web} descartados (tienen web) de {len(candidates)} candidatos"
+            )
 
-    def _save_empresas_sin_dominio_from_web(
+    async def _save_empresas_sin_dominio_from_web(
         self, search: dict, user_id: str, nicho: str, ciudad: str, pais: str
     ) -> None:
-        """Extrae negocios SIN website de local_results y places_results (web) e inserta."""
-        to_insert = []
+        """Extrae negocios SIN website de local_results y places_results (web), verifica y guarda."""
+        candidates = []
         def add_place(place: dict) -> None:
             if not isinstance(place, dict) or (place.get("website") or place.get("link")):
                 return
             title = (place.get("title") or "").strip()
             if not title or len(title) < 2:
                 return
-            to_insert.append({
+            candidates.append({
                 "user_id": user_id,
                 "nombre": title[:500],
                 "direccion": (place.get("address") or "").strip()[:500] or None,
@@ -1093,18 +1103,32 @@ class DomainHunterWorker:
                 add_place(place)
         for place in search.get("places_results", []) or []:
             add_place(place)
-        if not to_insert:
+        if not candidates:
             return
+
+        verified = await _batch_verify_no_web(self.serpapi_key, candidates)
         saved = 0
-        for row in to_insert:
+        skipped_has_web = 0
+        for row in verified:
+            if row.get("verification_status") == "has_web":
+                skipped_has_web += 1
+                continue
+            if (STRICT_NO_WEB_CHECK
+                    and row.get("verification_status") == "verified_no_web"
+                    and row.get("confidence_no_web", 0) < STRICT_NO_WEB_MIN_CONFIDENCE):
+                skipped_has_web += 1
+                continue
             try:
                 self.supabase.table("empresas_sin_dominio").insert(row).execute()
                 saved += 1
             except Exception as e:
                 if "duplicate" not in str(e).lower() and "unique" not in str(e).lower():
                     log.warning(f"  ⚠️ empresas_sin_dominio Web: {str(e)[:80]}")
-        if saved:
-            log.info(f"  📋 empresas_sin_dominio: {saved}/{len(to_insert)} sin web (Web) → tabla")
+        if saved or skipped_has_web:
+            log.info(
+                f"  📋 empresas_sin_dominio Web: {saved} guardados, "
+                f"{skipped_has_web} descartados (tienen web) de {len(candidates)} candidatos"
+            )
     
     def _harvest_related_searches(self, search: dict) -> None:
         """Extrae related_searches de la respuesta de SerpAPI.

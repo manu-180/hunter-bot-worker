@@ -70,12 +70,12 @@ class BotConfig:
     # ── Límite total de emails (warm-up dominio) ──────────────────────────
     # Solo cuenta envíos a dominios warmup-*.getbotlode.com. Una vez alcanzado,
     # el bot deja de enviar hasta el día siguiente (requeue) o se sube el límite.
-    MAX_TOTAL_EMAILS_SENT: int = _int("HUNTER_MAX_TOTAL_EMAILS_SENT", 40)
+    MAX_TOTAL_EMAILS_SENT: int = _int("HUNTER_MAX_TOTAL_EMAILS_SENT", 60)
 
     # ── Modo de email (lanzamiento vs completo) ────────────────────────────
     # "launch" = formato simple sin links para ganar confianza (primera semana).
     # "full" = formato completo BotLode con CTA y branding.
     # Cuando tengas buena reputación, cambia a "full" o env: HUNTER_EMAIL_MODE=full
-    EMAIL_MODE: str = _str("HUNTER_EMAIL_MODE", "launch")
+    EMAIL_MODE: str = _str("HUNTER_EMAIL_MODE", "full")
     # Asunto para modo launch: aburrido, que parezca humano (evita filtros).
     LAUNCH_SUBJECT: str = _str("HUNTER_LAUNCH_SUBJECT", "Consulta sobre su sitio web")
