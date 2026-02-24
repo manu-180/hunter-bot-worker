@@ -3,7 +3,7 @@ Domain Hunter Worker v8 - Worker daemon optimizado para buscar dominios.
 
 Optimizaciones v8 (sobre v7):
 - Query limpia: sin -site: exclusions en query (filtrado post-extraction con blacklist)
-- num=10: valor real de Google (antes num=100 era ignorado)
+- num=100: máximo absoluto de resultados orgánicos por crédito (SerpAPI cobra igual)
 - Maps x4: paginación extendida start=0/20/40/60 (antes solo 0/20)
 - Web paginación: start=0/10 para obtener páginas 2+ de la misma query
 - Cache cross-user: reusar resultados de queries idénticas (0 créditos)
@@ -12,7 +12,12 @@ Optimizaciones v8 (sobre v7):
 - Related searches: captura sugerencias gratuitas de Google
 - Sin doble delay: un solo sleep entre búsquedas (antes había 2)
 - Constantes optimizadas: frozensets a nivel de módulo (no per-call)
-- Secuencia 12 pasos: Maps-first (4 maps + 8 web), ~200 dominios/combinación
+- Secuencia 25 pasos: Web num=100 + Maps, ~1000+ dominios/combinación
+- 15 fuentes de extracción web (organic, snippets, displayed_link, local, KG, ads,
+  places, answer_box, news, videos, questions, shopping, images, events, jobs, twitter)
+- Regex en snippets: extrae dominios mencionados en texto de resultados
+- Maps zoom 12z: cobertura geográfica más amplia por búsqueda
+- Rotación de nichos: prioriza el del usuario pero rota por todos (45+)
 
 Optimizaciones v7 (heredadas):
 - Multi-source extraction: organic + local + KG + ads + places (7 fuentes)
@@ -30,6 +35,7 @@ import json
 import logging
 import os
 import random
+import re
 import time
 import traceback
 import urllib.request
@@ -41,6 +47,7 @@ from serpapi import GoogleSearch
 from supabase import create_client, Client
 
 from src.config import BotConfig
+from src.key_rotator import SerpApiKeyRotator
 from src.utils.timezone import is_business_hours, format_argentina_time, format_utc_time, utc_now
 from src.web_verification import (
     STRICT_NO_WEB_CHECK, STRICT_NO_WEB_MIN_CONFIDENCE,
@@ -55,8 +62,6 @@ load_dotenv()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")  # service_role key
-SERPAPI_KEY = os.getenv("SERPAPI_KEY")  # SerpAPI key para búsquedas
-
 # Delays y configuración centralizada via BotConfig (overrideable via env vars)
 MIN_DELAY_BETWEEN_SEARCHES = BotConfig.MIN_DELAY_BETWEEN_SEARCHES
 MAX_DELAY_BETWEEN_SEARCHES = BotConfig.MAX_DELAY_BETWEEN_SEARCHES
@@ -107,27 +112,33 @@ QUERY_TEMPLATES_MAPS = [
 #   - start_offset: paginación (web: 0/10/20, maps: 0/20/40/60)
 # =============================================================================
 SEARCH_SEQUENCE = [
+    # Cada web search devuelve hasta 100 orgánicos + local pack + KG + snippets + ads
+    # Cada maps search devuelve ~20 negocios con website directo
+    # COSTO: 1 crédito por línea, sin importar cuántos resultados devuelva
+    #
+    # --- Bloque 1: máximo rendimiento por crédito ---
+    ("web",  0, 0),     # "{nicho} en {ciudad}": ~100 orgánicos + 15 fuentes extra
     ("maps", 0, 0),     # Maps pag 1: ~20 negocios con website
-    ("web",  0, 0),     # Web directa: ~10 organicos + local pack + KG
-    ("maps", 0, 20),    # Maps pag 2: ~20 mas
-    ("web",  1, 0),     # Web "contacto email"
-    ("maps", 1, 40),    # Maps pag 3: ~20 mas (query corta)
-    ("web",  2, 0),     # Web "mejores X 2025"
-    ("maps", 1, 60),    # Maps pag 4: ~20 mas
-    ("web",  3, 0),     # Web "whatsapp telefono sitio web"
-    ("maps", 2, 0),     # Maps pag 1 query ranking: ~20 negocios
-    ("web",  4, 0),     # Web intitle: operador avanzado
-    ("maps", 2, 20),    # Maps pag 2 query ranking: ~20 mas
-    ("web",  0, 10),    # Web directa pag 2: 10 organicos mas
-    ("maps", 0, 80),    # Maps pag 5: ~20 mas
-    ("web",  5, 0),     # Web "profesional presupuesto"
-    ("maps", 0, 100),   # Maps pag 6: ~20 mas
-    ("web",  8, 0),     # Web "cerca de {ciudad} sitio web oficial"
-    ("web",  9, 0),     # Web "nuevos 2025 2026"
-    ("web",  10, 0),    # Web "directorio {nicho} {ciudad}"
-    ("web",  1, 10),    # Web "contacto email" pag 2
-    ("web",  6, 0),     # Web "recomendados opiniones"
-    ("web",  7, 0),     # Web "empresas de X servicios"
+    ("web",  1, 0),     # "{nicho} {ciudad} contacto email": ~100 con datos
+    ("maps", 0, 20),    # Maps pag 2: ~20 más
+    ("web",  2, 0),     # "mejores {nicho} {ciudad} 2025": ~100 rankings
+    ("maps", 1, 0),     # Maps query corta pag 1: ~20 negocios
+    ("web",  3, 0),     # "{nicho} {ciudad} whatsapp telefono sitio web": ~100
+    ("maps", 1, 20),    # Maps query corta pag 2: ~20 más
+    # --- Bloque 2: queries de intención comercial ---
+    ("web",  4, 0),     # intitle:"{nicho}" "{ciudad}": ~100 hits directos
+    ("maps", 2, 0),     # Maps query ranking pag 1: ~20 negocios
+    ("web",  5, 0),     # "{nicho} profesional {ciudad} presupuesto": ~100
+    ("maps", 2, 20),    # Maps query ranking pag 2: ~20 más
+    ("web",  6, 0),     # "{nicho} recomendados {ciudad} opiniones": ~100
+    ("web",  7, 0),     # "empresas de {nicho} en {ciudad} servicios": ~100
+    # --- Bloque 3: queries de cola larga (encuentran negocios que los demás no) ---
+    ("web",  8, 0),     # "{nicho} cerca de {ciudad} sitio web oficial": ~100
+    ("web",  9, 0),     # "{nicho} nuevos {ciudad} 2025 2026": ~100 recientes
+    ("web",  10, 0),    # "directorio {nicho} {ciudad}": ~100 desde directorios
+    ("maps", 0, 40),    # Maps T0 pag 3: ~20 más
+    ("maps", 0, 60),    # Maps T0 pag 4: ~20 más
+    ("maps", 0, 80),    # Maps T0 pag 5: ~20 más
 ]
 
 # Máximo de búsquedas a probar por combinación (cada una = 1 crédito)
@@ -462,7 +473,7 @@ class DomainHunterWorker:
         if not SUPABASE_URL or not SUPABASE_KEY:
             raise ValueError("SUPABASE_URL and SUPABASE_KEY must be set in environment variables")
         self.supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
-        self.serpapi_key = SERPAPI_KEY
+        self._key_rotator = SerpApiKeyRotator()
         self.active_users: Dict[str, dict] = {}
         # v8: cache de dominios por usuario (evita cross-contamination entre usuarios)
         self._user_domains_cache: Dict[str, Set[str]] = {}
@@ -487,10 +498,6 @@ class DomainHunterWorker:
         log.info("🔍 DOMAIN HUNTER WORKER v8 - Iniciando")
         log.info("=" * 70)
         
-        if not self.serpapi_key:
-            log.error("❌ SERPAPI_KEY no configurada. Abortando.")
-            return
-        
         # Fingerprint compacto
         _bh = is_business_hours()
         log.info(
@@ -498,7 +505,8 @@ class DomainHunterWorker:
             f"Horario: {BUSINESS_HOURS_START}-{BUSINESS_HOURS_END}h | "
             f"{'ACTIVO' if _bh else 'PAUSADO'} | "
             f"{TOTAL_PAISES} países, {TOTAL_CIUDADES} ciudades, {len(NICHOS)} nichos | "
-            f"Secuencia: {len(SEARCH_SEQUENCE)} búsquedas/combo (web+maps)"
+            f"Secuencia: {len(SEARCH_SEQUENCE)} búsquedas/combo (web+maps) | "
+            f"Keys: {self._key_rotator.total_keys}"
         )
         
         # Test de conectividad
@@ -524,33 +532,22 @@ class DomainHunterWorker:
             log.error(f"❌ Supabase ERROR: {e}")
             return False
         
-        # Test SerpAPI (gratis via /account.json)
-        credits = await self._check_remaining_credits()
-        if credits is None:
-            log.error("❌ SerpAPI ERROR: no se pudo verificar la API key")
+        # Test SerpAPI — verificar créditos de todas las keys
+        all_credits = await self._key_rotator.check_all_credits()
+        total = sum(v for v in all_credits.values() if v >= 0)
+        if total <= 0:
+            log.error("❌ SerpAPI ERROR: ninguna key tiene créditos disponibles")
             return False
         
         return True
     
     async def _check_remaining_credits(self) -> Optional[int]:
-        """Verifica créditos restantes de SerpAPI (gratis, no gasta créditos)."""
-        try:
-            url = f"https://serpapi.com/account.json?api_key={self.serpapi_key}"
-            req = urllib.request.Request(url)
-            data = await asyncio.to_thread(
-                lambda: urllib.request.urlopen(req, timeout=10).read()
-            )
-            info = json.loads(data.decode())
-            left = info.get("total_searches_left", 0)
-            plan = info.get("plan_name", "N/A")
-            used = info.get("this_month_usage", 0)
-            log.info(f"💰 SerpAPI: {left} restantes | Plan: {plan} | Usadas: {used}")
-            self._cached_credits_left = left
-            self._searches_since_credit_check = 0
-            return left
-        except Exception as e:
-            log.error(f"❌ Error verificando créditos SerpAPI: {e}")
-            return self._cached_credits_left
+        """Verifica créditos de la key activa via KeyRotator (auto-rota si agotada)."""
+        credits = await self._key_rotator.check_credits()
+        self._searches_since_credit_check = 0
+        if credits is not None:
+            self._cached_credits_left = credits
+        return credits
     
     def _get_sent_count(self) -> int:
         """Emails enviados solo en dominios warm-up (warmup-*). Para límite warm-up."""
@@ -591,6 +588,7 @@ class DomainHunterWorker:
                     self._daily_credits_date = today
                 
                 log.info(f"🔄 Procesando {len(self.active_users)} usuario(s) | {format_argentina_time()}")
+                log.info(self._key_rotator.get_stats())
                 
                 # Procesar usuarios en paralelo con semáforo
                 tasks = [
@@ -779,7 +777,7 @@ class DomainHunterWorker:
         """Búsqueda web con extracción multi-source de 7 fuentes.
         
         v8: query limpia sin -site: exclusions (filtrado post-extraction),
-        num=10 (valor real de Google), soporte de paginación con start,
+        num=100 (máximo absoluto, mismo costo por crédito), 15 fuentes de extracción,
         cache cross-user para evitar gastar créditos en queries repetidas.
         """
         template = QUERY_TEMPLATES_WEB[template_idx % len(QUERY_TEMPLATES_WEB)]
@@ -792,16 +790,17 @@ class DomainHunterWorker:
             log.info(f"  💾 Cache hit web: {len(cached)} dominios (0 créditos)")
             return cached
         
+        active_key = await self._key_rotator.get_key()
         params = {
             "q": query,
             "location": f"{ciudad}, {pais}",
             "hl": "es",
             "gl": gl_code,
-            "num": 10,
+            "num": 100,
             "start": start,
             "filter": 0,
             "nfpr": 1,
-            "api_key": self.serpapi_key
+            "api_key": active_key
         }
         
         search_obj = GoogleSearch(params)
@@ -810,9 +809,14 @@ class DomainHunterWorker:
                 asyncio.to_thread(search_obj.get_dict),
                 timeout=BotConfig.SERPAPI_TIMEOUT
             )
+            await self._key_rotator.report_success()
         except asyncio.TimeoutError:
             log.error(f"❌ SerpAPI timeout ({BotConfig.SERPAPI_TIMEOUT}s)")
+            await self._key_rotator.report_error("timeout")
             return set()
+        except Exception as e:
+            await self._key_rotator.report_error(str(e))
+            raise
         
         domains = self._extract_domains_from_web_response(search)
         await self._save_empresas_sin_dominio_from_web(search, user_id, nicho, ciudad, pais)
@@ -845,19 +849,19 @@ class DomainHunterWorker:
             log.info(f"  💾 Cache hit maps: {len(cached)} dominios (0 créditos)")
             return cached
         
-        # Construir parámetros de Maps
+        active_key = await self._key_rotator.get_key()
         params = {
             "engine": "google_maps",
             "q": query,
             "hl": "es",
             "type": "search",
-            "api_key": self.serpapi_key
+            "api_key": active_key
         }
         
         # Usar coordenadas GPS si disponibles, sino location text
         coords = CITY_COORDINATES.get(ciudad)
         if coords:
-            params["ll"] = f"@{coords},14z"
+            params["ll"] = f"@{coords},12z"
         else:
             params["ll"] = None  # Dejar que SerpAPI geocodifique
             params["location"] = f"{ciudad}, {pais}"
@@ -875,9 +879,14 @@ class DomainHunterWorker:
                 asyncio.to_thread(search_obj.get_dict),
                 timeout=BotConfig.SERPAPI_TIMEOUT
             )
+            await self._key_rotator.report_success()
         except asyncio.TimeoutError:
             log.error(f"❌ Maps timeout ({BotConfig.SERPAPI_TIMEOUT}s)")
+            await self._key_rotator.report_error("timeout")
             return set()
+        except Exception as e:
+            await self._key_rotator.report_error(str(e))
+            raise
         
         domains = self._extract_domains_from_maps_response(search)
         await self._save_empresas_sin_dominio_from_maps(search, user_id, nicho, ciudad, pais)
@@ -888,19 +897,68 @@ class DomainHunterWorker:
         
         return domains
     
+    _SNIPPET_URL_RE = re.compile(
+        r'(?:https?://)?(?:www\.)?([a-zA-Z0-9][-a-zA-Z0-9]{1,61}\.(?:com|net|org|info|biz|co|io|app|dev'
+        r'|com\.ar|com\.mx|com\.co|com\.pe|com\.br|com\.uy|com\.cl|com\.ec|com\.ve|com\.bo|com\.py'
+        r'|cl|mx|ar|co|pe|br|uy|ec|ve|bo|py))\b'
+    )
+
+    def _add_domain(self, domains: set, counts: dict, source: str, url: str) -> None:
+        """Helper: extrae dominio de url, valida y agrega al set."""
+        d = self._extract_domain(url)
+        if d and self._is_valid_domain(d):
+            domains.add(d)
+            counts[source] = counts.get(source, 0) + 1
+
+    def _extract_domains_from_snippet(self, text: str) -> Set[str]:
+        """Extrae dominios mencionados en texto plano (snippets, descripciones)."""
+        found = set()
+        if not text:
+            return found
+        for match in self._SNIPPET_URL_RE.finditer(text):
+            d = match.group(1).lower()
+            if self._is_valid_domain(d):
+                found.add(d)
+        return found
+
     def _extract_domains_from_web_response(self, search: dict) -> Set[str]:
-        """Extrae dominios de 7 fuentes en una respuesta web de SerpAPI."""
-        domains = set()
-        counts = {"organic": 0, "local": 0, "kg": 0, "related": 0, "ads": 0, "places": 0, "sitelinks": 0}
+        """Extrae dominios de 15+ fuentes en una respuesta web de SerpAPI.
         
-        # SOURCE 1: Resultados orgánicos
+        Maximiza dominios por crédito extrayendo de TODAS las secciones
+        que SerpAPI devuelve en una sola respuesta.
+        """
+        domains = set()
+        counts: dict = {}
+        
+        # SOURCE 1: Resultados orgánicos (hasta 40 con num=40)
         for result in search.get("organic_results", []):
             link = result.get("link")
             if link:
-                d = self._extract_domain(link)
-                if d and self._is_valid_domain(d):
-                    domains.add(d)
-                    counts["organic"] += 1
+                self._add_domain(domains, counts, "organic", link)
+            
+            # displayed_link a veces difiere del link real
+            displayed = result.get("displayed_link", "")
+            if displayed and displayed != link:
+                if not displayed.startswith("http"):
+                    displayed = "https://" + displayed
+                self._add_domain(domains, counts, "organic", displayed)
+            
+            # Dominios mencionados en snippets
+            snippet = result.get("snippet", "")
+            for sd in self._extract_domains_from_snippet(snippet):
+                domains.add(sd)
+                counts["snippet"] = counts.get("snippet", 0) + 1
+            
+            # Rich snippet con links
+            rich = result.get("rich_snippet", {})
+            if isinstance(rich, dict):
+                for _key, val in rich.items():
+                    if isinstance(val, dict):
+                        for v in val.values():
+                            if isinstance(v, str) and '.' in v:
+                                for sd in self._extract_domains_from_snippet(v):
+                                    domains.add(sd)
+                                    counts["snippet"] = counts.get("snippet", 0) + 1
             
             # Sitelinks (inline + expanded)
             sitelinks = result.get("sitelinks", {})
@@ -908,79 +966,146 @@ class DomainHunterWorker:
                 for sl in group:
                     sl_link = sl.get("link")
                     if sl_link:
-                        d = self._extract_domain(sl_link)
-                        if d and self._is_valid_domain(d):
-                            domains.add(d)
-                            counts["sitelinks"] += 1
+                        self._add_domain(domains, counts, "sitelinks", sl_link)
+            
+            # Source info
+            source_info = result.get("source", {})
+            if isinstance(source_info, dict):
+                src_link = source_info.get("link") or source_info.get("url", "")
+                if src_link:
+                    self._add_domain(domains, counts, "organic", src_link)
         
         # SOURCE 2: Local Results (Google Maps pack)
         local_results = search.get("local_results", [])
         if isinstance(local_results, dict):
-            local_results = local_results.get("places", [])
+            local_results = local_results.get("places", local_results.get("results", []))
         for local in local_results:
             if not isinstance(local, dict):
                 continue
-            website = local.get("website")
-            if website:
-                d = self._extract_domain(website)
-                if d and self._is_valid_domain(d):
-                    domains.add(d)
-                    counts["local"] += 1
+            for field in ("website", "link"):
+                val = local.get(field)
+                if val:
+                    self._add_domain(domains, counts, "local", val)
         
-        # SOURCE 3: Knowledge Graph
+        # SOURCE 3: Knowledge Graph (completo)
         kg = search.get("knowledge_graph", {})
-        kg_web = kg.get("website")
-        if kg_web:
-            d = self._extract_domain(kg_web)
-            if d and self._is_valid_domain(d):
-                domains.add(d)
-                counts["kg"] += 1
+        if isinstance(kg, dict):
+            kg_web = kg.get("website")
+            if kg_web:
+                self._add_domain(domains, counts, "kg", kg_web)
+            # KG profiles (redes sociales NO, pero websites de socios/competidores SÍ)
+            for profile in kg.get("profiles", []):
+                if isinstance(profile, dict):
+                    p_link = profile.get("link", "")
+                    if p_link:
+                        self._add_domain(domains, counts, "kg", p_link)
+            # KG known attributes con links
+            for attr_key in ("source", "header_images", "local_results"):
+                attr_val = kg.get(attr_key)
+                if isinstance(attr_val, dict):
+                    for v in attr_val.values():
+                        if isinstance(v, str) and v.startswith("http"):
+                            self._add_domain(domains, counts, "kg", v)
+                elif isinstance(attr_val, list):
+                    for item in attr_val:
+                        if isinstance(item, dict):
+                            for v in item.values():
+                                if isinstance(v, str) and v.startswith("http"):
+                                    self._add_domain(domains, counts, "kg", v)
         
         # SOURCE 4: Related Results
         for rel in search.get("related_results", []):
-            if not isinstance(rel, dict):
-                continue
-            r_link = rel.get("link")
-            if r_link:
-                d = self._extract_domain(r_link)
-                if d and self._is_valid_domain(d):
-                    domains.add(d)
-                    counts["related"] += 1
+            if isinstance(rel, dict) and rel.get("link"):
+                self._add_domain(domains, counts, "related", rel["link"])
         
-        # SOURCE 5: Ads (anuncios pagados = negocios REALES con presupuesto)
+        # SOURCE 5: Ads (negocios reales con presupuesto publicitario)
         for ad in search.get("ads", []):
             if not isinstance(ad, dict):
                 continue
-            ad_link = ad.get("link") or ad.get("tracking_link", "")
-            if ad_link:
-                d = self._extract_domain(ad_link)
-                if d and self._is_valid_domain(d):
-                    domains.add(d)
-                    counts["ads"] += 1
+            for field in ("link", "tracking_link", "displayed_link"):
+                val = ad.get(field, "")
+                if val:
+                    if not val.startswith("http"):
+                        val = "https://" + val
+                    self._add_domain(domains, counts, "ads", val)
+            # Sitelinks de ads
+            for sl in ad.get("sitelinks", []):
+                if isinstance(sl, dict) and sl.get("link"):
+                    self._add_domain(domains, counts, "ads", sl["link"])
         
         # SOURCE 6: Places Results (Maps embebido en web search)
         for place in search.get("places_results", []):
-            if not isinstance(place, dict):
-                continue
-            p_link = place.get("website") or place.get("link", "")
-            if p_link:
-                d = self._extract_domain(p_link)
-                if d and self._is_valid_domain(d):
-                    domains.add(d)
-                    counts["places"] += 1
+            if isinstance(place, dict):
+                for field in ("website", "link"):
+                    val = place.get(field, "")
+                    if val:
+                        self._add_domain(domains, counts, "places", val)
         
-        # SOURCE 7: Inline Local Results (variante de local pack)
-        inline_local = search.get("local_results", {})
-        if isinstance(inline_local, dict):
-            for place in inline_local.get("places", []):
-                if not isinstance(place, dict):
-                    continue
-                p_link = place.get("website") or place.get("link", "")
-                if p_link:
-                    d = self._extract_domain(p_link)
-                    if d and self._is_valid_domain(d):
-                        domains.add(d)
-                        counts["local"] += 1
+        # SOURCE 7: Answer Box / Featured Snippet
+        answer = search.get("answer_box", {})
+        if isinstance(answer, dict):
+            for field in ("link", "displayed_link", "result"):
+                val = answer.get(field, "")
+                if val:
+                    if isinstance(val, str) and (val.startswith("http") or '.' in val):
+                        if not val.startswith("http"):
+                            val = "https://" + val
+                        self._add_domain(domains, counts, "answer", val)
+            # Snippet text de answer box
+            for sd in self._extract_domains_from_snippet(answer.get("snippet", "")):
+                domains.add(sd)
+                counts["snippet"] = counts.get("snippet", 0) + 1
+        
+        # SOURCE 8: Top Stories / News Results
+        for key in ("top_stories", "news_results"):
+            for story in search.get(key, []):
+                if isinstance(story, dict) and story.get("link"):
+                    self._add_domain(domains, counts, "news", story["link"])
+        
+        # SOURCE 9: Inline Videos
+        for video in search.get("inline_videos", []):
+            if isinstance(video, dict) and video.get("link"):
+                self._add_domain(domains, counts, "videos", video["link"])
+        
+        # SOURCE 10: Related Questions ("People also ask")
+        for ppl in search.get("related_questions", []):
+            if isinstance(ppl, dict):
+                if ppl.get("link"):
+                    self._add_domain(domains, counts, "questions", ppl["link"])
+                for sd in self._extract_domains_from_snippet(ppl.get("snippet", "")):
+                    domains.add(sd)
+                    counts["snippet"] = counts.get("snippet", 0) + 1
+        
+        # SOURCE 11: Inline Shopping
+        for item in search.get("inline_shopping", search.get("shopping_results", [])):
+            if isinstance(item, dict):
+                for field in ("link", "source"):
+                    val = item.get(field, "")
+                    if val and val.startswith("http"):
+                        self._add_domain(domains, counts, "shopping", val)
+        
+        # SOURCE 12: Inline Images (links de origen)
+        for img in search.get("inline_images", []):
+            if isinstance(img, dict) and img.get("source"):
+                self._add_domain(domains, counts, "images", img["source"])
+        
+        # SOURCE 13: Events Results
+        for event in search.get("events_results", []):
+            if isinstance(event, dict) and event.get("link"):
+                self._add_domain(domains, counts, "events", event["link"])
+        
+        # SOURCE 14: Jobs Results (empresas que contratan = tienen web)
+        for job in search.get("jobs_results", []):
+            if isinstance(job, dict):
+                for field in ("link", "company_link"):
+                    val = job.get(field, "")
+                    if val:
+                        self._add_domain(domains, counts, "jobs", val)
+        
+        # SOURCE 15: Twitter/X Results (links a negocios en posts)
+        for tw in search.get("twitter_results", []):
+            if isinstance(tw, dict) and tw.get("link"):
+                self._add_domain(domains, counts, "twitter", tw["link"])
         
         active_sources = {k: v for k, v in counts.items() if v > 0}
         log.info(f"  📊 Web extraction: {active_sources} = {len(domains)} únicos")
@@ -1047,7 +1172,8 @@ class DomainHunterWorker:
         if not candidates:
             return
 
-        verified = await _batch_verify_no_web(self.serpapi_key, candidates)
+        verify_key = await self._key_rotator.get_key()
+        verified = await _batch_verify_no_web(verify_key, candidates)
         saved = 0
         skipped_has_web = 0
         for row in verified:
@@ -1106,7 +1232,8 @@ class DomainHunterWorker:
         if not candidates:
             return
 
-        verified = await _batch_verify_no_web(self.serpapi_key, candidates)
+        verify_key = await self._key_rotator.get_key()
+        verified = await _batch_verify_no_web(verify_key, candidates)
         saved = 0
         skipped_has_web = 0
         for row in verified:
@@ -1334,17 +1461,19 @@ class DomainHunterWorker:
             return None
 
     def _get_user_search_params(self, user_id: str) -> tuple:
-        """Obtiene nicho/pais/ciudades del config del usuario, fallback a globales.
+        """Obtiene nicho/pais/ciudades del config del usuario + todos los globales.
         
-        v8: Respeta la configuración del usuario en hunter_configs.
-        Si el usuario configuró nicho/pais/ciudades, se usan esos valores.
-        Si no, se usan los valores globales (NICHOS, PAISES, CIUDADES_POR_PAIS).
+        Rota entre TODOS los nichos (45+), poniendo el nicho del usuario primero
+        para que tenga más prioridad. Así se maximizan empresas sin dominio.
         """
         config = self.active_users.get(user_id, {})
         
-        # Nicho: usar el del usuario si existe, sino aleatorio global
+        # Nicho: TODOS los nichos, con el del usuario al principio para prioridad
         user_nicho = config.get('nicho')
-        nichos_pool = [user_nicho] if user_nicho else NICHOS
+        if user_nicho:
+            nichos_pool = [user_nicho] + [n for n in NICHOS if n != user_nicho]
+        else:
+            nichos_pool = list(NICHOS)
         
         # País: usar el del usuario si existe, sino aleatorio global
         user_pais = config.get('pais')
