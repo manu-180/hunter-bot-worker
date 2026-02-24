@@ -482,9 +482,6 @@ class DomainHunterWorker:
         # Credit management
         self._searches_since_credit_check = 0
         self._cached_credits_left: Optional[int] = None
-        # Daily credit tracking per user: {user_id: count}
-        self._daily_credits_used: Dict[str, int] = {}
-        self._daily_credits_date: Optional[str] = None
         # Semaphore for parallel user processing
         self._user_semaphore = asyncio.Semaphore(BotConfig.MAX_CONCURRENT_USERS)
         # v8: cache de related searches (sugerencias gratuitas de Google)
@@ -581,12 +578,6 @@ class DomainHunterWorker:
                         await asyncio.sleep(BotConfig.CREDIT_PAUSE_SECONDS)
                         continue
                 
-                # Resetear daily credits si cambió el día
-                today = utc_now().strftime("%Y-%m-%d")
-                if self._daily_credits_date != today:
-                    self._daily_credits_used.clear()
-                    self._daily_credits_date = today
-                
                 log.info(f"🔄 Procesando {len(self.active_users)} usuario(s) | {format_argentina_time()}")
                 log.info(self._key_rotator.get_stats())
                 
@@ -613,15 +604,8 @@ class DomainHunterWorker:
                 await asyncio.sleep(backoff)
     
     async def _process_user_safe(self, user_id: str, config: dict):
-        """Procesa un usuario con semáforo y control de budget."""
+        """Procesa un usuario con semáforo. Búsquedas 24/7 sin límite diario."""
         async with self._user_semaphore:
-            # Check daily credit budget
-            daily_limit = config.get('daily_credit_limit', BotConfig.DEFAULT_DAILY_CREDIT_LIMIT)
-            used_today = self._daily_credits_used.get(user_id, 0)
-            if used_today >= daily_limit:
-                log.info(f"[{user_id[:8]}] Budget diario agotado ({used_today}/{daily_limit})")
-                return
-            
             domains = await self._search_domains_for_user(user_id, config)
             
             if domains:
@@ -631,8 +615,6 @@ class DomainHunterWorker:
                     domain="system",
                     message=f"✅ {len(domains)} dominios nuevos agregados a la cola"
                 )
-                # Track credit usage
-                self._daily_credits_used[user_id] = used_today + 1
                 self._searches_since_credit_check += 1
                 
                 delay = random.randint(MIN_DELAY_BETWEEN_SEARCHES, MAX_DELAY_BETWEEN_SEARCHES)

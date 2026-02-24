@@ -427,17 +427,13 @@ class LeadSniperWorker:
                 # Sleep if no work was done
                 if work_done == 0:
                     cycles_without_work += 1
-                    
-                    # Si estamos fuera de horario laboral, dormir más tiempo
-                    if not is_business_hours(BUSINESS_HOURS_START, BUSINESS_HOURS_END):
-                        if cycles_without_work == 1:
-                            log.info(f"⏸️  Fuera de horario laboral ({format_argentina_time()}). "
-                                     f"Revisando cada {PAUSE_CHECK_INTERVAL}s...")
-                        await asyncio.sleep(PAUSE_CHECK_INTERVAL)
-                    else:
-                        if cycles_without_work == 1:
+                    if cycles_without_work == 1:
+                        if not is_business_hours(BUSINESS_HOURS_START, BUSINESS_HOURS_END):
+                            log.info(f"⏸️  Emails pausados (fuera de horario: {format_argentina_time()}). "
+                                     f"Scraping sigue activo 24/7.")
+                        else:
                             log.info(f"Sin trabajo pendiente, esperando {self.idle_sleep_seconds}s...")
-                        await asyncio.sleep(self.idle_sleep_seconds)
+                    await asyncio.sleep(self.idle_sleep_seconds)
                 else:
                     cycles_without_work = 0
                     
