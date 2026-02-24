@@ -50,7 +50,20 @@ class ScraperService:
         r'noreply|'
         r'no-reply|'
         r'mailer-daemon|'
-        r'postmaster',
+        r'postmaster|'
+        r'^name@company\.com$|'
+        r'^usuario@dominio\.com$|'
+        r'^user@domain\.com$|'
+        r'^email@domain\.com$|'
+        r'^your@email\.com$|'
+        r'^tu@email\.com$|'
+        r'^correo@ejemplo\.com$|'
+        r'^dpo@|'
+        r'^privacy@|'
+        r'^abuse@|'
+        r'^gdpr@|'
+        r'^compliance@|'
+        r'^legal@',
         re.IGNORECASE
     )
 
@@ -574,7 +587,7 @@ class ScraperService:
                         continue
                 
                 # Select the best email (prefer non-generic ones)
-                best_email = self._select_best_email(all_emails)
+                best_email = self._select_best_email(all_emails, domain=domain)
                 
                 if best_email:
                     log.success(f"✉️  Email encontrado en {domain}: {best_email}")
@@ -610,37 +623,44 @@ class ScraperService:
             finally:
                 await context.close()
 
-    def _select_best_email(self, emails: Set[str]) -> Optional[str]:
+    def _select_best_email(self, emails: Set[str], domain: str = "") -> Optional[str]:
         """
         Select the best email from a set of candidates.
-        
-        Prioritizes emails that are more likely to be monitored
-        (e.g., info@, contact@, hello@).
-        
-        Args:
-            emails: Set of candidate emails
-            
-        Returns:
-            Best email or None if set is empty
+        Prioritizes same-domain emails and common business prefixes.
+        Rejects cross-domain generic emails (e.g. info@consulting.com on lunaguiviajes.com).
         """
         if not emails:
             return None
-        
-        # Priority prefixes (most likely to be monitored)
+
+        clean_domain = domain.lower().replace("www.", "").strip(".") if domain else ""
+
+        same_domain = set()
+        other_domain = set()
+        for email in emails:
+            email_domain = email.split("@")[-1].lower() if "@" in email else ""
+            if clean_domain and email_domain and (
+                email_domain == clean_domain
+                or clean_domain.endswith("." + email_domain)
+                or email_domain.endswith("." + clean_domain)
+            ):
+                same_domain.add(email)
+            else:
+                other_domain.add(email)
+
+        pool = same_domain if same_domain else other_domain
+
         priority_prefixes = [
             'info@', 'contact@', 'hello@', 'hola@',
             'sales@', 'ventas@', 'support@', 'soporte@',
             'admin@', 'office@', 'team@', 'equipo@',
         ]
-        
-        # Try to find a priority email
+
         for prefix in priority_prefixes:
-            for email in emails:
+            for email in pool:
                 if email.startswith(prefix):
                     return email
-        
-        # Return any email if no priority match
-        return next(iter(emails))
+
+        return next(iter(pool))
 
     async def scrape_batch(
         self,

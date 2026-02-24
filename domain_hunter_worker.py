@@ -1509,35 +1509,43 @@ class DomainHunterWorker:
             log.error(f"[{user_id[:8]}] ❌ Error creando primera combinación: {e}")
             return None
 
+    _rpc_increment_available: bool = True
+
     async def _increment_page(self, user_id: str, nicho: str, ciudad: str, pais: str, domains_found: int):
         """Incrementa página con un solo UPDATE (sin SELECT previo)."""
         try:
-            # Intentar usar RPC si existe, sino fallback a SELECT + UPDATE
-            try:
-                self.supabase.rpc("increment_search_page", {
-                    "p_user_id": user_id,
-                    "p_nicho": nicho,
-                    "p_ciudad": ciudad,
-                    "p_pais": pais,
-                    "p_domains_found": domains_found
-                }).execute()
-            except Exception:
-                # Fallback: SELECT + UPDATE (compatibilidad con DB sin RPC)
-                response = self.supabase.table("domain_search_tracking")\
-                    .select("current_page, total_domains_found")\
-                    .eq("user_id", user_id).eq("nicho", nicho)\
-                    .eq("ciudad", ciudad).eq("pais", pais)\
-                    .execute()
-                
-                if response.data:
-                    cd = response.data[0]
-                    self.supabase.table("domain_search_tracking").update({
-                        "current_page": cd['current_page'] + 1,
-                        "total_domains_found": cd['total_domains_found'] + domains_found,
-                        "last_searched_at": utc_now().isoformat(),
-                        "updated_at": utc_now().isoformat()
-                    }).eq("user_id", user_id).eq("nicho", nicho)\
-                      .eq("ciudad", ciudad).eq("pais", pais).execute()
+            if self._rpc_increment_available:
+                try:
+                    self.supabase.rpc("increment_search_page", {
+                        "p_user_id": user_id,
+                        "p_nicho": nicho,
+                        "p_ciudad": ciudad,
+                        "p_pais": pais,
+                        "p_domains_found": domains_found
+                    }).execute()
+                    return
+                except Exception as rpc_err:
+                    if "404" in str(rpc_err) or "not found" in str(rpc_err).lower():
+                        self.__class__._rpc_increment_available = False
+                        log.warning("⚠️ RPC increment_search_page no existe, usando fallback SELECT+UPDATE")
+                    else:
+                        raise
+
+            response = self.supabase.table("domain_search_tracking")\
+                .select("current_page, total_domains_found")\
+                .eq("user_id", user_id).eq("nicho", nicho)\
+                .eq("ciudad", ciudad).eq("pais", pais)\
+                .execute()
+
+            if response.data:
+                cd = response.data[0]
+                self.supabase.table("domain_search_tracking").update({
+                    "current_page": cd['current_page'] + 1,
+                    "total_domains_found": cd['total_domains_found'] + domains_found,
+                    "last_searched_at": utc_now().isoformat(),
+                    "updated_at": utc_now().isoformat()
+                }).eq("user_id", user_id).eq("nicho", nicho)\
+                  .eq("ciudad", ciudad).eq("pais", pais).execute()
         except Exception as e:
             log.error(f"❌ Error incrementando página: {e}")
 
