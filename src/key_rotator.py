@@ -99,42 +99,49 @@ class SerpApiKeyRotator:
                 if rotated:
                     return self._states[self._current_idx].key
                 if state.exhausted:
-                    log.warning("⚠️ Todas las keys agotadas, usando la actual de todas formas")
-                    state.exhausted = False
+                    log.warning("⚠️ Todas las keys agotadas, forzando re-check de créditos")
+                    for s in self._states:
+                        s.last_credit_check = 0.0
+                        s.exhausted = False
 
-            return state.key
+            return self._states[self._current_idx].key
 
     async def report_success(self) -> None:
         """Registra una búsqueda exitosa en la key actual."""
-        state = self._states[self._current_idx]
-        state.searches_done += 1
-        state.errors = 0
-        if state.credits_left is not None:
-            state.credits_left = max(0, state.credits_left - 1)
+        async with self._lock:
+            state = self._states[self._current_idx]
+            state.searches_done += 1
+            state.errors = 0
+            if state.credits_left is not None:
+                state.credits_left = max(0, state.credits_left - 1)
+                if state.credits_left < MIN_CREDITS_THRESHOLD:
+                    state.exhausted = True
+                    log.warning(
+                        f"⚠️ Key {state.masked} con solo {state.credits_left} créditos tras búsqueda. Rotando..."
+                    )
+                    self._rotate_to_next()
 
     async def report_error(self, error_msg: str = "") -> None:
         """Registra un error. Si parece rate-limit o key inválida, rota."""
-        state = self._states[self._current_idx]
-        state.errors += 1
-        lower = error_msg.lower()
+        async with self._lock:
+            state = self._states[self._current_idx]
+            state.errors += 1
+            lower = error_msg.lower()
 
-        if "rate" in lower or "limit" in lower or "429" in lower or "too many" in lower:
-            state.rate_limited_until = time.time() + 120
-            log.warning(
-                f"🔄 Key {state.masked} rate-limited, cooldown 2min. Rotando..."
-            )
-            async with self._lock:
+            if "rate" in lower or "limit" in lower or "429" in lower or "too many" in lower:
+                state.rate_limited_until = time.time() + 120
+                log.warning(
+                    f"🔄 Key {state.masked} rate-limited, cooldown 2min. Rotando..."
+                )
                 self._rotate_to_next()
-        elif "invalid" in lower or "unauthorized" in lower or "403" in lower:
-            state.exhausted = True
-            log.warning(f"🔄 Key {state.masked} inválida/expirada. Rotando...")
-            async with self._lock:
+            elif "invalid" in lower or "unauthorized" in lower or "403" in lower:
+                state.exhausted = True
+                log.warning(f"🔄 Key {state.masked} inválida/expirada. Rotando...")
                 self._rotate_to_next()
-        elif state.errors >= 5:
-            log.warning(
-                f"🔄 Key {state.masked} con {state.errors} errores consecutivos. Rotando..."
-            )
-            async with self._lock:
+            elif state.errors >= 5:
+                log.warning(
+                    f"🔄 Key {state.masked} con {state.errors} errores consecutivos. Rotando..."
+                )
                 self._rotate_to_next()
 
     async def check_credits(self) -> Optional[int]:
@@ -143,13 +150,16 @@ class SerpApiKeyRotator:
         Returns: créditos restantes o None si falla.
         Auto-rota si la key no tiene créditos.
         """
-        state = self._states[self._current_idx]
-        now = time.time()
-        if now - state.last_credit_check < CREDIT_CHECK_INTERVAL:
-            return state.credits_left
+        async with self._lock:
+            state = self._states[self._current_idx]
+            now = time.time()
+            if now - state.last_credit_check < CREDIT_CHECK_INTERVAL:
+                return state.credits_left
+            key_to_check = state.key
+            state_ref = state
 
         try:
-            url = f"https://serpapi.com/account.json?api_key={state.key}"
+            url = f"https://serpapi.com/account.json?api_key={key_to_check}"
             req = urllib.request.Request(url)
             data = await asyncio.to_thread(
                 lambda: urllib.request.urlopen(req, timeout=10).read()
@@ -159,26 +169,26 @@ class SerpApiKeyRotator:
             plan = info.get("plan_name", "N/A")
             used = info.get("this_month_usage", 0)
 
-            state.credits_left = left
-            state.last_credit_check = now
+            async with self._lock:
+                state_ref.credits_left = left
+                state_ref.last_credit_check = time.time()
 
-            log.info(
-                f"💰 Key {state.masked}: {left} créditos restantes | "
-                f"Plan: {plan} | Usadas este mes: {used}"
-            )
-
-            if left < MIN_CREDITS_THRESHOLD:
-                state.exhausted = True
-                log.warning(
-                    f"⚠️ Key {state.masked} con solo {left} créditos. Rotando..."
+                log.info(
+                    f"💰 Key {state_ref.masked}: {left} créditos restantes | "
+                    f"Plan: {plan} | Usadas este mes: {used}"
                 )
-                async with self._lock:
+
+                if left < MIN_CREDITS_THRESHOLD:
+                    state_ref.exhausted = True
+                    log.warning(
+                        f"⚠️ Key {state_ref.masked} con solo {left} créditos. Rotando..."
+                    )
                     self._rotate_to_next()
 
             return left
         except Exception as e:
-            log.error(f"❌ Error verificando créditos de {state.masked}: {e}")
-            return state.credits_left
+            log.error(f"❌ Error verificando créditos de {state_ref.masked}: {e}")
+            return state_ref.credits_left
 
     async def check_all_credits(self) -> Dict[str, int]:
         """Verifica créditos de TODAS las keys. Retorna {masked_key: credits}."""

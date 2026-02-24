@@ -303,7 +303,7 @@ VALID_BUSINESS_TLDS: frozenset = frozenset({
 # v8: CONSTANTES MOVIDAS A NIVEL DE MÓDULO (antes se creaban en cada llamada)
 # Evita garbage collection innecesario en cada invocación de _is_valid_domain
 # =============================================================================
-INVALID_DOMAIN_CHARS: frozenset = frozenset('[]{|}\\  %?=&#')
+INVALID_DOMAIN_CHARS: frozenset = frozenset('[]{|}\\  %?=&#›·»')
 
 DIRECTORY_PATTERNS: frozenset = frozenset({
     'directorio', 'listado', 'guia-de', 'ranking', 'top10',
@@ -918,9 +918,10 @@ class DomainHunterWorker:
             if link:
                 self._add_domain(domains, counts, "organic", link)
             
-            # displayed_link a veces difiere del link real
             displayed = result.get("displayed_link", "")
             if displayed and displayed != link:
+                if "›" in displayed:
+                    displayed = displayed.replace(" › ", "/").replace("›", "/")
                 if not displayed.startswith("http"):
                     displayed = "https://" + displayed
                 self._add_domain(domains, counts, "organic", displayed)
@@ -1007,6 +1008,8 @@ class DomainHunterWorker:
             for field in ("link", "tracking_link", "displayed_link"):
                 val = ad.get(field, "")
                 if val:
+                    if "›" in val:
+                        val = val.replace(" › ", "/").replace("›", "/")
                     if not val.startswith("http"):
                         val = "https://" + val
                     self._add_domain(domains, counts, "ads", val)
@@ -1030,6 +1033,8 @@ class DomainHunterWorker:
                 val = answer.get(field, "")
                 if val:
                     if isinstance(val, str) and (val.startswith("http") or '.' in val):
+                        if "›" in val:
+                            val = val.replace(" › ", "/").replace("›", "/")
                         if not val.startswith("http"):
                             val = "https://" + val
                         self._add_domain(domains, counts, "answer", val)
