@@ -1540,18 +1540,25 @@ class DomainHunterWorker:
     # =============================================================================
     
     async def _get_next_combination_to_search(self, user_id: str) -> Optional[dict]:
-        """Obtiene la próxima combinación no agotada. Resetea si todas agotadas."""
+        """Obtiene la próxima combinación no agotada. Prioriza nichos Assistify (clases, gimnasios, etc.)."""
         try:
+            # Traer varias combinaciones para priorizar las que coinciden con Assistify
             response = self.supabase.table("domain_search_tracking")\
                 .select("*")\
                 .eq("user_id", user_id)\
                 .eq("is_exhausted", False)\
                 .order("current_page", desc=False)\
-                .limit(1)\
+                .limit(50)\
                 .execute()
             
             if response.data:
-                return response.data[0]
+                # Ordenar: primero Assistify (para ofrecer app de paso), luego por current_page
+                def _sort_key(row):
+                    nicho = (row.get("nicho") or "").lower()
+                    is_assistify = 0 if _is_assistify_nicho(nicho) else 1
+                    return (is_assistify, row.get("current_page") or 0)
+                sorted_rows = sorted(response.data, key=_sort_key)
+                return sorted_rows[0]
             
             log.info(f"[{user_id[:8]}] 🔄 Todas agotadas, reseteando...")
             await self._reset_all_combinations(user_id)
@@ -1561,11 +1568,16 @@ class DomainHunterWorker:
                 .eq("user_id", user_id)\
                 .eq("is_exhausted", False)\
                 .order("current_page", desc=False)\
-                .limit(1)\
+                .limit(50)\
                 .execute()
             
             if response.data:
-                return response.data[0]
+                def _sort_key(row):
+                    nicho = (row.get("nicho") or "").lower()
+                    is_assistify = 0 if _is_assistify_nicho(nicho) else 1
+                    return (is_assistify, row.get("current_page") or 0)
+                sorted_rows = sorted(response.data, key=_sort_key)
+                return sorted_rows[0]
             
             return await self._create_first_combination(user_id)
         except Exception as e:
@@ -1575,17 +1587,20 @@ class DomainHunterWorker:
     def _get_user_search_params(self, user_id: str) -> tuple:
         """Obtiene nicho/pais/ciudades del config del usuario + todos los globales.
         
-        Rota entre TODOS los nichos (45+), poniendo el nicho del usuario primero
-        para que tenga más prioridad. Así se maximizan empresas sin dominio.
+        Prioriza nichos Assistify (clases, gimnasios, cerámica, etc.) para poder
+        ofrecer la app de paso; luego el nicho del usuario; luego el resto.
         """
         config = self.active_users.get(user_id, {})
         
-        # Nicho: TODOS los nichos, con el del usuario al principio para prioridad
+        # Nicho: usuario primero, después todos los que coinciden con Assistify, después el resto
         user_nicho = config.get('nicho')
+        rest = [n for n in NICHOS if n != user_nicho]
+        assistify_rest = [n for n in rest if _is_assistify_nicho(n)]
+        other_rest = [n for n in rest if not _is_assistify_nicho(n)]
         if user_nicho:
-            nichos_pool = [user_nicho] + [n for n in NICHOS if n != user_nicho]
+            nichos_pool = [user_nicho] + assistify_rest + other_rest
         else:
-            nichos_pool = list(NICHOS)
+            nichos_pool = assistify_rest + other_rest
         
         # País: usar el del usuario si existe, sino aleatorio global
         user_pais = config.get('pais')
@@ -1612,8 +1627,8 @@ class DomainHunterWorker:
         """
         try:
             nichos_pool, paises_pool, user_ciudades = self._get_user_search_params(user_id)
-            
-            nicho = random.choice(nichos_pool)
+            assistify_nichos = [n for n in nichos_pool if _is_assistify_nicho(n)]
+            nicho = random.choice(assistify_nichos) if assistify_nichos else random.choice(nichos_pool)
             pais = random.choice(paises_pool)
             
             if user_ciudades:
