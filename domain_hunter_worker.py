@@ -1523,7 +1523,7 @@ class DomainHunterWorker:
     _rpc_increment_available: bool = True
 
     async def _increment_page(self, user_id: str, nicho: str, ciudad: str, pais: str, domains_found: int):
-        """Incrementa página con un solo UPDATE (sin SELECT previo)."""
+        """Incrementa página con un solo UPDATE (sin SELECT previo). Si la RPC no existe, usa fallback SELECT+UPDATE."""
         try:
             if self._rpc_increment_available:
                 try:
@@ -1536,9 +1536,12 @@ class DomainHunterWorker:
                     }).execute()
                     return
                 except Exception as rpc_err:
-                    if "404" in str(rpc_err) or "not found" in str(rpc_err).lower():
+                    err_str = str(rpc_err).lower()
+                    if ("404" in str(rpc_err) or "not found" in err_str or "could not find" in err_str
+                            or "PGRST202" in str(rpc_err)):
                         self.__class__._rpc_increment_available = False
                         log.warning("⚠️ RPC increment_search_page no existe, usando fallback SELECT+UPDATE")
+                        # Continuar al fallback en esta misma llamada para no perder el incremento
                     else:
                         raise
 

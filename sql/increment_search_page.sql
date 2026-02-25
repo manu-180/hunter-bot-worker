@@ -2,6 +2,11 @@
 -- RPC: increment_search_page
 -- Reduce 2 queries (SELECT + UPDATE) a 1 sola operación atómica.
 -- Llamado desde domain_hunter_worker.py via supabase.rpc()
+--
+-- OBLIGATORIO: Este script DEBE ejecutarse en el SQL Editor de Supabase
+-- (Dashboard → SQL Editor → New query → pegar y Run). Si no existe la función,
+-- HunterBot verá error PGRST202 "Could not find the function ... in the schema
+-- cache" y usará fallback SELECT+UPDATE (menos eficiente pero funcional).
 -- =============================================================================
 
 CREATE OR REPLACE FUNCTION increment_search_page(
