@@ -368,25 +368,36 @@ def _clasificar_negocio(type_raw: Optional[str], types_list: Optional[List[str]]
 
 
 # =============================================================================
-# ASSISTIFY LEADS - Keywords para identificar rubros con clases pagas mensuales
-# Negocios que venden clases/membresías y se beneficiarían de Assistify
-# (cancelar/recuperar alumnos que no vienen un mes)
+# ASSISTIFY LEADS - Rubros con clases por mes/bono (cancelar y recuperar crédito)
+# Criterio: pagás X clases al mes o un bono; si no vas, querés recuperar. Ver docs/INFORME_RUBROS_ASSISTIFY.md
 # =============================================================================
 ASSISTIFY_NICHO_KEYWORDS: frozenset = frozenset({
+    # Estructura (cualquier negocio que tenga esto en nombre/tipo)
     "clase", "clases", "taller", "talleres", "academia", "academias",
     "instituto", "institutos", "escuela de", "escuelas de",
+    # Arte y manualidades
+    "cerámica", "ceramica", "pintura", "dibujo", "escultura",
+    "manualidades", "costura",
+    # Música
+    "música", "musica", "piano", "guitarra", "violín", "violin",
+    "canto", "coros", "bajo", "batería", "bateria", "ukelele",
+    # Idiomas
+    "idiomas", "inglés", "ingles", "portugués", "portugues", "francés", "frances",
+    # Deporte y fitness
     "gimnasio", "gimnasios", "gym", "fitness", "crossfit",
     "pilates", "yoga", "spinning", "zumba", "funcional",
-    "danza", "baile", "ballet", "tap", "flamenco",
-    "música", "musica", "piano", "guitarra", "violín", "violin",
-    "canto", "coros", "teatro", "actuación", "actuacion",
-    "cerámica", "ceramica", "pintura", "dibujo", "escultura",
+    # Deporte y artes marciales
     "natación", "natacion", "tenis", "padel", "pádel", "golf",
     "boxeo", "kickboxing", "artes marciales", "karate", "taekwondo",
-    "judo", "jiu-jitsu", "jujitsu", "muay thai",
-    "idiomas", "inglés", "ingles", "portugués", "portugues", "francés", "frances",
+    "judo", "jiu-jitsu", "jujitsu", "muay thai", "gimnasia artística", "gimnasia artistica",
+    # Danza
+    "danza", "baile", "ballet", "flamenco", "salsa", "tango", "tap",
+    # Cocina
     "cocina", "repostería", "reposteria", "pastelería", "pasteleria",
-    "marketing digital", "programación", "programacion",
+    # Teatro y expresión
+    "teatro", "actuación", "actuacion", "improvisación", "improvisacion",
+    # Otros talleres
+    "fotografía", "fotografia",
 })
 
 
@@ -888,13 +899,13 @@ class DomainHunterWorker:
             "api_key": active_key
         }
         
-        # Usar coordenadas GPS si disponibles, sino location text
+        # Usar coordenadas GPS si disponibles, sino location text (requiere z con location)
         coords = CITY_COORDINATES.get(ciudad)
         if coords:
             params["ll"] = f"@{coords},12z"
         else:
-            params["ll"] = None  # Dejar que SerpAPI geocodifique
             params["location"] = f"{ciudad}, {pais}"
+            params["z"] = 14  # requerido por SerpAPI cuando se usa location
         
         # Limpiar None values
         params = {k: v for k, v in params.items() if v is not None}
