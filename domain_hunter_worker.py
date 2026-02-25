@@ -366,6 +366,48 @@ def _clasificar_negocio(type_raw: Optional[str], types_list: Optional[List[str]]
             return "landing_info"
     return None
 
+
+# =============================================================================
+# ASSISTIFY LEADS - Keywords para identificar rubros con clases pagas mensuales
+# Negocios que venden clases/membresías y se beneficiarían de Assistify
+# (cancelar/recuperar alumnos que no vienen un mes)
+# =============================================================================
+ASSISTIFY_NICHO_KEYWORDS: frozenset = frozenset({
+    "clase", "clases", "taller", "talleres", "academia", "academias",
+    "instituto", "institutos", "escuela de", "escuelas de",
+    "gimnasio", "gimnasios", "gym", "fitness", "crossfit",
+    "pilates", "yoga", "spinning", "zumba", "funcional",
+    "danza", "baile", "ballet", "tap", "flamenco",
+    "música", "musica", "piano", "guitarra", "violín", "violin",
+    "canto", "coros", "teatro", "actuación", "actuacion",
+    "cerámica", "ceramica", "pintura", "dibujo", "escultura",
+    "natación", "natacion", "tenis", "padel", "pádel", "golf",
+    "boxeo", "kickboxing", "artes marciales", "karate", "taekwondo",
+    "judo", "jiu-jitsu", "jujitsu", "muay thai",
+    "idiomas", "inglés", "ingles", "portugués", "portugues", "francés", "frances",
+    "cocina", "repostería", "reposteria", "pastelería", "pasteleria",
+    "marketing digital", "programación", "programacion",
+})
+
+
+def _is_assistify_nicho(nicho: str, type_raw: Optional[str] = None,
+                        types_list: Optional[List[str]] = None) -> bool:
+    """True si el nicho o tipo del negocio indica clases/membresías pagas (candidato Assistify)."""
+    text = nicho.lower()
+    for kw in ASSISTIFY_NICHO_KEYWORDS:
+        if kw in text:
+            return True
+    # Verificar también los tipos de negocio reportados por Google Maps
+    combined = ""
+    if type_raw:
+        combined += " " + type_raw.lower()
+    if types_list:
+        combined += " " + " ".join(t.lower() for t in types_list if isinstance(t, str))
+    for kw in ASSISTIFY_NICHO_KEYWORDS:
+        if kw in combined:
+            return True
+    return False
+
 # =============================================================================
 # LISTAS DE ROTACIÓN AUTOMÁTICA
 # =============================================================================
@@ -791,7 +833,6 @@ class DomainHunterWorker:
                 asyncio.to_thread(search_obj.get_dict),
                 timeout=BotConfig.SERPAPI_TIMEOUT
             )
-            await self._key_rotator.report_success()
         except asyncio.TimeoutError:
             log.error(f"❌ SerpAPI timeout ({BotConfig.SERPAPI_TIMEOUT}s)")
             await self._key_rotator.report_error("timeout")
@@ -799,7 +840,14 @@ class DomainHunterWorker:
         except Exception as e:
             await self._key_rotator.report_error(str(e))
             raise
-        
+
+        err = search.get("error") if isinstance(search, dict) else None
+        if err:
+            log.warning(f"⚠️ SerpAPI error en respuesta (web): {str(err)[:80]}")
+            await self._key_rotator.report_error(str(err))
+            return set()
+        await self._key_rotator.report_success()
+
         domains = self._extract_domains_from_web_response(search)
         await self._save_empresas_sin_dominio_from_web(search, user_id, nicho, ciudad, pais)
         
@@ -861,7 +909,6 @@ class DomainHunterWorker:
                 asyncio.to_thread(search_obj.get_dict),
                 timeout=BotConfig.SERPAPI_TIMEOUT
             )
-            await self._key_rotator.report_success()
         except asyncio.TimeoutError:
             log.error(f"❌ Maps timeout ({BotConfig.SERPAPI_TIMEOUT}s)")
             await self._key_rotator.report_error("timeout")
@@ -869,9 +916,17 @@ class DomainHunterWorker:
         except Exception as e:
             await self._key_rotator.report_error(str(e))
             raise
-        
+
+        err = search.get("error") if isinstance(search, dict) else None
+        if err:
+            log.warning(f"⚠️ SerpAPI error en respuesta (Maps): {str(err)[:80]}")
+            await self._key_rotator.report_error(str(err))
+            return set()
+        await self._key_rotator.report_success()
+
         domains = self._extract_domains_from_maps_response(search)
         await self._save_empresas_sin_dominio_from_maps(search, user_id, nicho, ciudad, pais)
+        await self._save_assistify_leads_from_maps(search, user_id, nicho, ciudad, pais)
         
         # v8: almacenar en cache cross-user
         if domains:
@@ -1106,7 +1161,7 @@ class DomainHunterWorker:
         
         local_results = search.get("local_results", [])
         if isinstance(local_results, dict):
-            local_results = local_results.get("places", [])
+            local_results = local_results.get("places", local_results.get("results", []))
         for result in local_results:
             if not isinstance(result, dict):
                 continue
@@ -1135,7 +1190,7 @@ class DomainHunterWorker:
         """Extrae negocios SIN website de la respuesta Maps, verifica y guarda."""
         local_results = search.get("local_results", [])
         if isinstance(local_results, dict):
-            local_results = local_results.get("places", [])
+            local_results = local_results.get("places", local_results.get("results", []))
         candidates = []
         for result in local_results:
             if not isinstance(result, dict):
@@ -1222,7 +1277,7 @@ class DomainHunterWorker:
             for local in lr:
                 add_place(local)
         elif isinstance(lr, dict):
-            for place in (lr.get("places") or []):
+            for place in (lr.get("places") or lr.get("results") or []):
                 add_place(place)
         for place in search.get("places_results", []) or []:
             add_place(place)
@@ -1255,6 +1310,65 @@ class DomainHunterWorker:
                 f"{skipped_has_web} descartados (tienen web) de {len(candidates)} candidatos"
             )
     
+    async def _save_assistify_leads_from_maps(
+        self, search: dict, user_id: str, nicho: str, ciudad: str, pais: str
+    ) -> None:
+        """Extrae negocios de Maps que coincidan con rubros Assistify y guarda en assistify_leads.
+
+        Complementa el trabajo del Seeder Bot: el Hunter Bot también contribuye
+        a assistify_leads durante sus búsquedas en Maps, aprovechando cada crédito
+        de SerpAPI al máximo (un crédito → dominios + empresas_sin_dominio + assistify_leads).
+        """
+        local_results = search.get("local_results", [])
+        if isinstance(local_results, dict):
+            local_results = local_results.get("places", local_results.get("results", []))
+        if not isinstance(local_results, list):
+            return
+
+        nicho_es_assistify = _is_assistify_nicho(nicho)
+        candidates = []
+        for result in local_results:
+            if not isinstance(result, dict):
+                continue
+            type_raw = result.get("type") or result.get("type_id") or ""
+            types_list = result.get("types") or result.get("type_ids") or []
+            if isinstance(types_list, str):
+                types_list = [types_list]
+            # Incluir si el nicho buscado es de Assistify O si el tipo del negocio lo es
+            if not nicho_es_assistify and not _is_assistify_nicho("", type_raw, types_list):
+                continue
+            title = (result.get("title") or "").strip()
+            if not title or len(title) < 2:
+                continue
+            candidates.append({
+                "user_id": user_id,
+                "nombre": title[:500],
+                "direccion": (result.get("address") or "").strip()[:500] or None,
+                "telefono": (result.get("phone") or "").strip()[:100] or None,
+                "ciudad": ciudad[:200],
+                "pais": pais[:200],
+                "rubro": nicho[:200],
+                "source": "hunter",
+                "type_raw": (str(type_raw)[:200] if type_raw else None),
+            })
+
+        if not candidates:
+            return
+
+        saved = 0
+        for row in candidates:
+            try:
+                self.supabase.table("assistify_leads").insert(row).execute()
+                saved += 1
+            except Exception as e:
+                if "duplicate" not in str(e).lower() and "unique" not in str(e).lower():
+                    log.warning(f"  ⚠️ assistify_leads: {str(e)[:80]}")
+        if saved:
+            log.info(
+                f"  ✨ assistify_leads: {saved} guardados de {len(candidates)} candidatos "
+                f"(nicho={nicho}, ciudad={ciudad})"
+            )
+
     def _harvest_related_searches(self, search: dict) -> None:
         """Extrae related_searches de la respuesta de SerpAPI.
         

@@ -160,6 +160,15 @@ async def verify_no_website(
             "details": f"error verificación: {str(e)[:80]}",
         }
 
+    err = results.get("error") if isinstance(results, dict) else None
+    if err:
+        return {
+            "status": "verified_no_web",
+            "confidence": 50,
+            "found_domain": None,
+            "details": f"SerpAPI error en respuesta: {str(err)[:80]}",
+        }
+
     # 1) Knowledge Graph — señal más fuerte
     kg = results.get("knowledge_graph", {})
     kg_website = kg.get("website")
@@ -176,7 +185,7 @@ async def verify_no_website(
     # 2) Local results en búsqueda web (a veces Maps devuelve website aquí)
     local_results = results.get("local_results", [])
     if isinstance(local_results, dict):
-        local_results = local_results.get("places", [])
+        local_results = local_results.get("places", local_results.get("results", []))
     if isinstance(local_results, list):
         for lr in local_results:
             if not isinstance(lr, dict):
