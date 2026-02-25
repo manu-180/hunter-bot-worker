@@ -1,7 +1,16 @@
 """
-Domain Hunter Worker v8 - Worker daemon optimizado para buscar dominios.
+Domain Hunter Worker v9 - Worker daemon optimizado para buscar dominios.
 
-Optimizaciones v8 (sobre v7):
+Optimizaciones v9 (sobre v8):
+- 5 nuevos QUERY_TEMPLATES_WEB (total 16): enfocados en sitios directos de negocios,
+  con exclusiones selectivas de mega-portales y términos de acción corporativos.
+- SEARCH_SEQUENCE extendida a 30 pasos (antes 20): 10 búsquedas Maps adicionales
+  (T1 pag3, T2 pag3, T0 pag6, T0 pag7, T1 pag4) + 5 nuevas queries Web.
+- MIN_NEW_RATIO_FOR_PAGINATION: 0.05 (antes 0.15) — menos abandono prematuro de combos.
+- Evaluación de rendimiento desde pag 4 (antes pag 2) — deja que Maps profundice.
+- Maps zoom 11z (antes 12z): radio ~40km → captura más negocios por búsqueda.
+
+Optimizaciones v8 (heredadas):
 - Query limpia: sin -site: exclusions en query (filtrado post-extraction con blacklist)
 - num=100: máximo absoluto de resultados orgánicos por crédito (SerpAPI cobra igual)
 - Maps x4: paginación extendida start=0/20/40/60 (antes solo 0/20)
@@ -12,11 +21,9 @@ Optimizaciones v8 (sobre v7):
 - Related searches: captura sugerencias gratuitas de Google
 - Sin doble delay: un solo sleep entre búsquedas (antes había 2)
 - Constantes optimizadas: frozensets a nivel de módulo (no per-call)
-- Secuencia 25 pasos: Web num=100 + Maps, ~1000+ dominios/combinación
 - 15 fuentes de extracción web (organic, snippets, displayed_link, local, KG, ads,
   places, answer_box, news, videos, questions, shopping, images, events, jobs, twitter)
 - Regex en snippets: extrae dominios mencionados en texto de resultados
-- Maps zoom 12z: cobertura geográfica más amplia por búsqueda
 - Rotación de nichos: prioriza el del usuario pero rota por todos (45+)
 
 Optimizaciones v7 (heredadas):
@@ -96,6 +103,12 @@ QUERY_TEMPLATES_WEB = [
     "{nicho} cerca de {ciudad} sitio web oficial",            # 8: Negocios con web oficial
     "{nicho} nuevos {ciudad} 2025 2026",                      # 9: Negocios recientes
     "directorio {nicho} {ciudad}",                            # 10: Listados con links a negocios
+    # --- Templates v9: enfocados en sitios directos de negocios (menos portales) ---
+    '"{nicho}" {ciudad} "presupuesto" OR "turnos" OR "reservas"',  # 11: Intent de acción (negocios reales)
+    "{nicho} {ciudad} -zonaprop -argenprop -mercadolibre -olx -clarin",  # 12: Exclusiones de mega-portales
+    '"{nicho}" {ciudad} "quienes somos" OR "nuestros servicios"',  # 13: Páginas corporativas
+    "{nicho} {ciudad} barrio zona norte OR zona sur OR centro",    # 14: Segmentación geográfica intra-ciudad
+    "{nicho} {ciudad} inurl:contacto OR inurl:servicios OR inurl:nosotros",  # 15: URLs con páginas clave
 ]
 
 QUERY_TEMPLATES_MAPS = [
@@ -118,18 +131,18 @@ SEARCH_SEQUENCE = [
     #
     # --- Bloque 1: máximo rendimiento por crédito ---
     ("web",  0, 0),     # "{nicho} en {ciudad}": ~100 orgánicos + 15 fuentes extra
-    ("maps", 0, 0),     # Maps pag 1: ~20 negocios con website
+    ("maps", 0, 0),     # Maps T0 pag 1: ~20 negocios con website
     ("web",  1, 0),     # "{nicho} {ciudad} contacto email": ~100 con datos
-    ("maps", 0, 20),    # Maps pag 2: ~20 más
+    ("maps", 0, 20),    # Maps T0 pag 2: ~20 más
     ("web",  2, 0),     # "mejores {nicho} {ciudad} 2025": ~100 rankings
-    ("maps", 1, 0),     # Maps query corta pag 1: ~20 negocios
+    ("maps", 1, 0),     # Maps T1 (query corta) pag 1: ~20 negocios
     ("web",  3, 0),     # "{nicho} {ciudad} whatsapp telefono sitio web": ~100
-    ("maps", 1, 20),    # Maps query corta pag 2: ~20 más
+    ("maps", 1, 20),    # Maps T1 pag 2: ~20 más
     # --- Bloque 2: queries de intención comercial ---
     ("web",  4, 0),     # intitle:"{nicho}" "{ciudad}": ~100 hits directos
-    ("maps", 2, 0),     # Maps query ranking pag 1: ~20 negocios
+    ("maps", 2, 0),     # Maps T2 (ranking) pag 1: ~20 negocios
     ("web",  5, 0),     # "{nicho} profesional {ciudad} presupuesto": ~100
-    ("maps", 2, 20),    # Maps query ranking pag 2: ~20 más
+    ("maps", 2, 20),    # Maps T2 pag 2: ~20 más
     ("web",  6, 0),     # "{nicho} recomendados {ciudad} opiniones": ~100
     ("web",  7, 0),     # "empresas de {nicho} en {ciudad} servicios": ~100
     # --- Bloque 3: queries de cola larga (encuentran negocios que los demás no) ---
@@ -139,13 +152,26 @@ SEARCH_SEQUENCE = [
     ("maps", 0, 40),    # Maps T0 pag 3: ~20 más
     ("maps", 0, 60),    # Maps T0 pag 4: ~20 más
     ("maps", 0, 80),    # Maps T0 pag 5: ~20 más
+    # --- Bloque 4 (v9): templates orientados a sitios directos de negocios ---
+    ("web",  11, 0),    # "{nicho}" {ciudad} "presupuesto|turnos|reservas": negocios reales
+    ("maps", 1, 40),    # Maps T1 pag 3: ~20 más (query corta da distintos resultados)
+    ("web",  12, 0),    # "{nicho} {ciudad} -zonaprop -argenprop -mercadolibre": sin mega-portales
+    ("maps", 2, 40),    # Maps T2 pag 3: ~20 más (query ranking profundidad extra)
+    ("web",  13, 0),    # "{nicho}" {ciudad} "quienes somos|nuestros servicios": corporativos
+    ("maps", 0, 100),   # Maps T0 pag 6: ~20 más (profundidad máxima)
+    ("web",  14, 0),    # "{nicho} {ciudad} barrio zona norte|sur|centro": micro-geo
+    ("maps", 0, 120),   # Maps T0 pag 7: ~20 más (extender límite Maps)
+    ("web",  15, 0),    # "{nicho} {ciudad} inurl:contacto|servicios|nosotros": páginas clave
+    ("maps", 1, 60),    # Maps T1 pag 4: ~20 más
 ]
 
 # Máximo de búsquedas a probar por combinación (cada una = 1 crédito)
 MAX_PAGES_PER_COMBINATION = len(SEARCH_SEQUENCE)
 
-# Ratio mínimo de dominios nuevos para justificar seguir con más templates
-MIN_NEW_RATIO_FOR_PAGINATION = 0.15  # Si <15% son nuevos, no gastar más créditos
+# Ratio mínimo de dominios nuevos para justificar seguir con más templates.
+# v9: bajado de 0.15 → 0.05. Maps repite negocios entre páginas pero hay más
+# en profundidad; el threshold alto cortaba demasiado pronto la paginación.
+MIN_NEW_RATIO_FOR_PAGINATION = 0.05  # Si <5% son nuevos desde pag 4, rotar combo
 
 # Mapeo correcto de país → código ISO 3166-1 para parámetro gl de Google
 PAIS_GL_CODE = {
@@ -902,7 +928,8 @@ class DomainHunterWorker:
         # Usar coordenadas GPS si disponibles, sino location text (requiere z con location)
         coords = CITY_COORDINATES.get(ciudad)
         if coords:
-            params["ll"] = f"@{coords},12z"
+            # v9: zoom 11z (antes 12z) → radio ~40km → captura más negocios por búsqueda
+            params["ll"] = f"@{coords},11z"
         else:
             params["location"] = f"{ciudad}, {pais}"
             params["z"] = 14  # requerido por SerpAPI cuando se usa location
@@ -1424,7 +1451,10 @@ class DomainHunterWorker:
                 await self._mark_combination_exhausted(user_id, nicho, ciudad, pais)
         elif current_page >= MAX_PAGES_PER_COMBINATION - 1:
             await self._mark_combination_exhausted(user_id, nicho, ciudad, pais)
-        elif new_ratio < MIN_NEW_RATIO_FOR_PAGINATION and current_page >= 2:
+        elif new_ratio < MIN_NEW_RATIO_FOR_PAGINATION and current_page >= 4:
+            # v9: evaluar rendimiento recién desde pag 4 (antes: pag 2).
+            # Las primeras páginas de Maps siempre repiten; el rendimiento real
+            # se estabiliza después del bloque 1 de la SEARCH_SEQUENCE.
             await self._mark_combination_exhausted(user_id, nicho, ciudad, pais)
             log.info(f"[{user_id[:8]}] 🏁 Rendimiento bajo ({new_ratio:.0%}), rotando combinación")
         else:
