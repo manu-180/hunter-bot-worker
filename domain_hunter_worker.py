@@ -1120,6 +1120,15 @@ class DomainHunterWorker:
         log.info(f"  🗺️  Maps extraction: {total} con website → {len(domains)} únicos válidos")
         return domains
 
+    # Columnas que solo usa la verificación; la tabla empresas_sin_dominio puede no tenerlas
+    _EMPRESAS_SIN_DOMINIO_VERIFICATION_KEYS = frozenset({
+        "confidence_no_web", "verification_details", "verified_at", "verification_status",
+    })
+
+    def _empresas_sin_dominio_row_for_insert(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        """Quita campos de verificación para insertar en empresas_sin_dominio (evita 400 si no existen en tabla)."""
+        return {k: v for k, v in row.items() if k not in self._EMPRESAS_SIN_DOMINIO_VERIFICATION_KEYS}
+
     async def _save_empresas_sin_dominio_from_maps(
         self, search: dict, user_id: str, nicho: str, ciudad: str, pais: str
     ) -> None:
@@ -1173,7 +1182,8 @@ class DomainHunterWorker:
                 skipped_has_web += 1
                 continue
             try:
-                self.supabase.table("empresas_sin_dominio").insert(row).execute()
+                clean = self._empresas_sin_dominio_row_for_insert(row)
+                self.supabase.table("empresas_sin_dominio").insert(clean).execute()
                 saved += 1
             except Exception as e:
                 if "duplicate" not in str(e).lower() and "unique" not in str(e).lower():
@@ -1233,7 +1243,8 @@ class DomainHunterWorker:
                 skipped_has_web += 1
                 continue
             try:
-                self.supabase.table("empresas_sin_dominio").insert(row).execute()
+                clean = self._empresas_sin_dominio_row_for_insert(row)
+                self.supabase.table("empresas_sin_dominio").insert(clean).execute()
                 saved += 1
             except Exception as e:
                 if "duplicate" not in str(e).lower() and "unique" not in str(e).lower():
