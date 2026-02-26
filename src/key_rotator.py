@@ -138,6 +138,10 @@ class SerpApiKeyRotator:
                 state.exhausted = True
                 log.warning(f"🔄 Key {state.masked} inválida/expirada. Rotando...")
                 self._rotate_to_next()
+            elif "run out" in lower or "out of searches" in lower:
+                state.exhausted = True
+                log.warning(f"🔄 Key {state.masked} sin créditos (run out of searches). Rotando...")
+                self._rotate_to_next()
             elif state.errors >= 5:
                 log.warning(
                     f"🔄 Key {state.masked} con {state.errors} errores consecutivos. Rotando..."
