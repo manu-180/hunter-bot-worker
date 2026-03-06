@@ -1,13 +1,16 @@
 """
-Domain Hunter Worker v9 - Worker daemon optimizado para buscar dominios.
+Domain Hunter Worker v10 - Worker daemon optimizado para buscar dominios.
 
-Optimizaciones v9 (sobre v8):
+Optimizaciones v10 (sobre v9):
+- SEARCH_SEQUENCE reducida a 25 pasos (antes 30): eliminados los 5 pasos finales
+  (Maps T0 p6/p7, Maps T1 p4, Web T14/T15) que los logs confirman con 0 dominios
+  consistentemente. Mismo rendimiento con 17% menos créditos por combinación.
+- MIN_NEW_RATIO_FOR_PAGINATION subido a 0.08 (antes 0.05): umbral más estricto.
+- Evaluación de rendimiento desde pag 3 (antes pag 4): corta antes combos repetitivos.
+
+Optimizaciones v9 (heredadas):
 - 5 nuevos QUERY_TEMPLATES_WEB (total 16): enfocados en sitios directos de negocios,
   con exclusiones selectivas de mega-portales y términos de acción corporativos.
-- SEARCH_SEQUENCE extendida a 30 pasos (antes 20): 10 búsquedas Maps adicionales
-  (T1 pag3, T2 pag3, T0 pag6, T0 pag7, T1 pag4) + 5 nuevas queries Web.
-- MIN_NEW_RATIO_FOR_PAGINATION: 0.05 (antes 0.15) — menos abandono prematuro de combos.
-- Evaluación de rendimiento desde pag 4 (antes pag 2) — deja que Maps profundice.
 - Maps zoom 11z (antes 12z): radio ~40km → captura más negocios por búsqueda.
 
 Optimizaciones v8 (heredadas):
@@ -158,20 +161,19 @@ SEARCH_SEQUENCE = [
     ("web",  12, 0),    # "{nicho} {ciudad} -zonaprop -argenprop -mercadolibre": sin mega-portales
     ("maps", 2, 40),    # Maps T2 pag 3: ~20 más (query ranking profundidad extra)
     ("web",  13, 0),    # "{nicho}" {ciudad} "quienes somos|nuestros servicios": corporativos
-    ("maps", 0, 100),   # Maps T0 pag 6: ~20 más (profundidad máxima)
-    ("web",  14, 0),    # "{nicho} {ciudad} barrio zona norte|sur|centro": micro-geo
-    ("maps", 0, 120),   # Maps T0 pag 7: ~20 más (extender límite Maps)
-    ("web",  15, 0),    # "{nicho} {ciudad} inurl:contacto|servicios|nosotros": páginas clave
-    ("maps", 1, 60),    # Maps T1 pag 4: ~20 más
+    # --- v10: pasos 25-29 eliminados (Maps T0 p6/p7, Web T14/T15, Maps T1 p4) ---
+    # Los logs muestran 0 dominios en estos pasos de manera consistente.
+    # Se ahorran 5 créditos/combinación sin pérdida de cobertura real.
 ]
 
 # Máximo de búsquedas a probar por combinación (cada una = 1 crédito)
 MAX_PAGES_PER_COMBINATION = len(SEARCH_SEQUENCE)
 
 # Ratio mínimo de dominios nuevos para justificar seguir con más templates.
-# v9: bajado de 0.15 → 0.05. Maps repite negocios entre páginas pero hay más
-# en profundidad; el threshold alto cortaba demasiado pronto la paginación.
-MIN_NEW_RATIO_FOR_PAGINATION = 0.05  # Si <5% son nuevos desde pag 4, rotar combo
+# v10: subido de 0.05 → 0.08. Con la SEARCH_SEQUENCE recortada (25 pasos),
+# los pasos iniciales son los de mayor rendimiento; si desde la pag 3 el
+# rendimiento cae por debajo del 8%, la combinación ya está madura para rotar.
+MIN_NEW_RATIO_FOR_PAGINATION = 0.08  # Si <8% son nuevos desde pag 3, rotar combo
 
 # Mapeo correcto de país → código ISO 3166-1 para parámetro gl de Google
 PAIS_GL_CODE = {
@@ -1451,12 +1453,13 @@ class DomainHunterWorker:
                 await self._mark_combination_exhausted(user_id, nicho, ciudad, pais)
         elif current_page >= MAX_PAGES_PER_COMBINATION - 1:
             await self._mark_combination_exhausted(user_id, nicho, ciudad, pais)
-        elif new_ratio < MIN_NEW_RATIO_FOR_PAGINATION and current_page >= 4:
-            # v9: evaluar rendimiento recién desde pag 4 (antes: pag 2).
-            # Las primeras páginas de Maps siempre repiten; el rendimiento real
-            # se estabiliza después del bloque 1 de la SEARCH_SEQUENCE.
+        elif new_ratio < MIN_NEW_RATIO_FOR_PAGINATION and current_page >= 3:
+            # v10: evaluar rendimiento desde pag 3 (antes: pag 4).
+            # Con SEARCH_SEQUENCE de 25 pasos, los bloques 1-2 (primeras 14 búsquedas)
+            # cubren el grueso del rendimiento; si en pag 3 el ratio ya es bajo,
+            # la combinación está madura y conviene rotar a una nueva.
             await self._mark_combination_exhausted(user_id, nicho, ciudad, pais)
-            log.info(f"[{user_id[:8]}] 🏁 Rendimiento bajo ({new_ratio:.0%}), rotando combinación")
+            log.info(f"[{user_id[:8]}] 🏁 Rendimiento bajo ({new_ratio:.0%} < {MIN_NEW_RATIO_FOR_PAGINATION:.0%}), rotando combinación")
         else:
             await self._increment_page(user_id, nicho, ciudad, pais, domains_count)
     

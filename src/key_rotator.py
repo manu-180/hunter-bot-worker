@@ -20,8 +20,12 @@ from typing import Dict, List, Optional
 
 log = logging.getLogger("domain_hunter")
 
-CREDIT_CHECK_INTERVAL = 300  # segundos entre checks de créditos por key
-MIN_CREDITS_THRESHOLD = 5    # mínimo de créditos para considerar una key usable
+# Verificar créditos cada 180s (antes 300s): detecta keys al límite más rápido.
+# El endpoint /account.json es gratuito y no consume créditos de búsqueda.
+CREDIT_CHECK_INTERVAL = 180
+# Buffer de 15 créditos antes de rotar (antes 5): evita los errores "run out of searches"
+# que ocurrían cuando la key llegaba a 0 antes de que el rotador actuara.
+MIN_CREDITS_THRESHOLD = 15
 
 
 @dataclass

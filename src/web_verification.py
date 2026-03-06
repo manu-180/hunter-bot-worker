@@ -66,6 +66,11 @@ _PLATFORM_KEYWORDS = frozenset({
     "wikipedia", "wikidata",
     # Empleo
     "zonajobs", "computrabajo", "bumeran", "indeed", "glassdoor",
+    # Link-in-bio / landings no corporativas
+    "linktr.ee", "beacons.ai", "taplink", "about.me",
+    # Constructores / hosting gratis (normalmente no web corporativa sólida)
+    "carrd", "wixsite", "weebly", "jimdosite", "webnode", "blogspot",
+    "github.io", "sites.google.com",
 })
 
 # Dominios gubernamentales / educativos
