@@ -33,6 +33,7 @@ class LogAction(str, Enum):
     SEND_START = "send_start"
     SEND_SUCCESS = "send_success"
     SEND_FAILED = "send_failed"
+    WPP_FOLLOWUP_SENT = "wpp_followup_sent"
     CONFIG_MISSING = "config_missing"
     DOMAIN_ADDED = "domain_added"
     SYSTEM_INFO = "system_info"
@@ -255,6 +256,23 @@ class HunterLoggerService:
             lead_id=lead_id
         )
     
+    def wpp_followup_sent(
+        self,
+        user_id: str,
+        domain: str,
+        wpp_number: str,
+        lead_id: Optional[str] = None,
+    ) -> bool:
+        """Log de WPP follow-up enviado exitosamente tras el email."""
+        return self.log(
+            user_id=user_id,
+            domain=domain,
+            level=LogLevel.SUCCESS,
+            action=LogAction.WPP_FOLLOWUP_SENT,
+            message=f"WPP follow-up enviado a {wpp_number} tras email a {domain}",
+            lead_id=lead_id,
+        )
+
     def config_missing(self, user_id: str, domain: str, lead_id: Optional[str] = None) -> bool:
         """Log de configuración faltante."""
         return self.log(

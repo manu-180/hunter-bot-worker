@@ -27,6 +27,7 @@ from src.config import BotConfig
 from src.infrastructure.supabase_repo import SupabaseRepository
 from src.services.scraper import ScraperService
 from src.services.mailer import MailerService
+from src.services.wpp_followup_sender import WppFollowupSender
 from src.services.hunter_logger import HunterLoggerService
 from src.utils.logger import log
 from src.utils.timezone import is_business_hours, format_argentina_time
@@ -92,6 +93,7 @@ class LeadSniperWorker:
         self.repo: Optional[SupabaseRepository] = None
         self.scraper: Optional[ScraperService] = None
         self.mailer: Optional[MailerService] = None
+        self.wpp_sender: Optional[WppFollowupSender] = None
         self.hunter_logger: Optional[HunterLoggerService] = None
         
         # Cache for user configs (with TTL to prevent unbounded growth)
@@ -136,7 +138,10 @@ class LeadSniperWorker:
         except Exception as e:
             log.error(f"Error inicializando mailer: {e}")
             raise
-        
+
+        # WPP follow-up sender es opcional: si faltan credenciales, funciona en modo silencioso
+        self.wpp_sender = WppFollowupSender()
+
         try:
             self.hunter_logger = HunterLoggerService(self.repo.client)
             log.success("Servicio de Hunter Logger inicializado")
@@ -158,11 +163,16 @@ class LeadSniperWorker:
             await self.scraper.close()
             self.scraper = None
             log.info("Scraper cerrado")
-        
+
         if self.mailer:
             await self.mailer.close()
             self.mailer = None
             log.info("Mailer cerrado")
+
+        if self.wpp_sender:
+            await self.wpp_sender.close()
+            self.wpp_sender = None
+            log.info("WPP Follow-up Sender cerrado")
         
         self._running = False
         log.success("Worker detenido correctamente")
@@ -208,7 +218,8 @@ class LeadSniperWorker:
                 self.repo.mark_as_scraped(
                     result.lead_id,
                     result.email,
-                    result.meta_title
+                    result.meta_title,
+                    result.wpp_number,
                 )
                 
                 # Log result for user
@@ -339,7 +350,7 @@ class LeadSniperWorker:
             # Update database and log result
             if result.success:
                 self.repo.mark_as_sent(lead.id)
-                
+
                 if self.hunter_logger:
                     self.hunter_logger.send_success(
                         user_id=user_id,
@@ -347,6 +358,22 @@ class LeadSniperWorker:
                         email=lead.email or "",
                         lead_id=str(lead.id)
                     )
+
+                # WPP follow-up: si se encontró un número de WhatsApp durante el scraping,
+                # enviamos un mensaje informando que acaban de recibir un email.
+                if self.wpp_sender and lead.wpp_number:
+                    company_name = (
+                        lead.meta_title
+                        or lead.domain.split(".")[0].replace("-", " ").title()
+                    )
+                    await self.wpp_sender.send(lead.wpp_number, company_name)
+                    if self.hunter_logger:
+                        self.hunter_logger.wpp_followup_sent(
+                            user_id=user_id,
+                            domain=lead.domain,
+                            wpp_number=lead.wpp_number,
+                            lead_id=str(lead.id)
+                        )
             else:
                 self.repo.mark_as_failed(
                     lead.id,

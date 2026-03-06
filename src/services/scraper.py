@@ -26,11 +26,22 @@ class ScraperService:
     Uses Playwright for browser automation with concurrent tab management
     and BeautifulSoup for HTML parsing. Implements smart navigation to
     find contact pages and robust email extraction with junk filtering.
+    Also extracts WhatsApp contact numbers for post-email follow-up.
     """
 
     # Regex pattern for email extraction
     EMAIL_PATTERN = re.compile(
         r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}',
+        re.IGNORECASE
+    )
+
+    # WhatsApp number extraction: wa.me links, api.whatsapp.com links, whatsapp: URIs
+    WPP_URL_PATTERN = re.compile(
+        r'(?:'
+        r'wa\.me/\+?(\d{7,15})'          # wa.me/5491112345678
+        r'|api\.whatsapp\.com/send\?(?:[^"\']*&)?phone=\+?(\d{7,15})'  # api.whatsapp.com/send?phone=...
+        r'|whatsapp:(?://)?(\+\d{7,15})' # whatsapp:+5491112345678
+        r')',
         re.IGNORECASE
     )
 
@@ -389,6 +400,56 @@ class ScraperService:
             return title[:200] if len(title) > 200 else title
         return None
 
+    def _extract_wpp_number(self, html: str) -> Optional[str]:
+        """
+        Extract the first WhatsApp number found in HTML content.
+
+        Searches for:
+        - wa.me/NUMBER links
+        - api.whatsapp.com/send?phone=NUMBER links
+        - whatsapp:+NUMBER URIs
+
+        Returns the raw match (digits or full whatsapp: URI) or None.
+        """
+        match = self.WPP_URL_PATTERN.search(html)
+        if not match:
+            return None
+        # Groups: (wa.me digits, api.whatsapp digits, whatsapp: uri)
+        digits = match.group(1) or match.group(2)
+        uri = match.group(3)
+        if digits:
+            return digits
+        if uri:
+            return uri.lstrip('+')
+        return None
+
+    async def _extract_wpp_from_page(self, page: Page) -> Optional[str]:
+        """
+        Extract WhatsApp number from a Playwright page using multiple strategies.
+        """
+        try:
+            # Strategy 1: href attributes of anchor tags
+            wpp_hrefs = await page.evaluate('''() => {
+                const links = document.querySelectorAll('a[href]');
+                for (const a of links) {
+                    const href = a.href || '';
+                    if (href.includes('wa.me') || href.includes('api.whatsapp.com') || href.startsWith('whatsapp:')) {
+                        return href;
+                    }
+                }
+                return '';
+            }''')
+            if wpp_hrefs:
+                number = self._extract_wpp_number(wpp_hrefs)
+                if number:
+                    return number
+
+            # Strategy 2: Full HTML source
+            html = await page.content()
+            return self._extract_wpp_number(html)
+        except Exception:
+            return None
+
     async def _find_contact_links(self, page: Page) -> List[str]:
         """
         Find links to contact/about pages.
@@ -453,6 +514,7 @@ class ScraperService:
             page = await context.new_page()
             
             all_emails: Set[str] = set()
+            wpp_number: Optional[str] = None
             title: Optional[str] = None
             is_spa = False
             
@@ -508,6 +570,11 @@ class ScraperService:
                 
                 all_emails.update(homepage_emails)
                 
+                # Extraer número de WPP desde la homepage
+                wpp_number = await self._extract_wpp_from_page(page)
+                if wpp_number:
+                    log.info(f"WhatsApp encontrado en {domain}: {wpp_number}")
+
                 log.info(f"Homepage {domain}: encontrados {len(homepage_emails)} emails")
                 if self.debug_mode and homepage_emails:
                     log.info(f"Emails en homepage: {', '.join(list(homepage_emails)[:3])}")
@@ -576,6 +643,12 @@ class ScraperService:
                         if not title:
                             title = self._extract_title(html)
                         
+                        # Intentar extraer WPP desde la página de contacto si aún no tenemos
+                        if not wpp_number:
+                            wpp_number = await self._extract_wpp_from_page(page)
+                            if wpp_number:
+                                log.info(f"WhatsApp encontrado en contacto {contact_url}: {wpp_number}")
+
                         # If we found emails, we can stop looking
                         if contact_emails:
                             break
@@ -599,6 +672,7 @@ class ScraperService:
                     domain=lead.domain,
                     success=True,
                     email=best_email,
+                    wpp_number=wpp_number,
                     meta_title=title
                 )
                 

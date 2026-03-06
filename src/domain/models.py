@@ -60,6 +60,7 @@ class Lead(LeadBase):
         user_id: Owner's user ID (for multi-tenant support)
         domain: Target domain to scrape
         email: Extracted contact email (if found)
+        wpp_number: Extracted WhatsApp number (if found), used for WPP follow-up
         meta_title: Page title extracted from the website
         status: Current state in the pipeline
         error_message: Error details if status is 'failed'
@@ -71,6 +72,7 @@ class Lead(LeadBase):
     id: UUID
     user_id: Optional[UUID] = None  # For multi-tenant support
     email: Optional[str] = None
+    wpp_number: Optional[str] = None  # WhatsApp number for follow-up after email
     meta_title: Optional[str] = None
     status: LeadStatus = LeadStatus.PENDING
     error_message: Optional[str] = None
@@ -155,6 +157,7 @@ class ScrapingResult(BaseModel):
         domain: The domain that was scraped
         success: Whether scraping was successful
         email: Extracted email (if found)
+        wpp_number: Extracted WhatsApp number (if found)
         meta_title: Page title (if found)
         error: Error message if scraping failed
     """
@@ -162,6 +165,7 @@ class ScrapingResult(BaseModel):
     domain: str
     success: bool
     email: Optional[str] = None
+    wpp_number: Optional[str] = None  # WhatsApp number for follow-up
     meta_title: Optional[str] = None
     error: Optional[str] = None
 

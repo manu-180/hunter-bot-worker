@@ -120,7 +120,8 @@ class SupabaseRepository:
         self,
         lead_id: UUID,
         email: Optional[str],
-        meta_title: Optional[str]
+        meta_title: Optional[str],
+        wpp_number: Optional[str] = None,
     ) -> bool:
         """
         Update a lead with scraped data and mark as scraped.
@@ -132,24 +133,26 @@ class SupabaseRepository:
             lead_id: UUID of the lead to update
             email: Extracted email address (or None if not found)
             meta_title: Page title (or None if not found)
+            wpp_number: Extracted WhatsApp number (or None if not found)
             
         Returns:
             True if update was successful, False otherwise
         """
-        # If we found an email, queue it for sending; otherwise just mark as scraped
         new_status = (
-            LeadStatus.QUEUED_FOR_SEND.value 
-            if email 
+            LeadStatus.QUEUED_FOR_SEND.value
+            if email
             else LeadStatus.SCRAPED.value
         )
-        
+
         update_data = {
             "email": email,
             "meta_title": meta_title,
             "status": new_status,
             "scraped_at": datetime.now(timezone.utc).isoformat(),
         }
-        
+        if wpp_number:
+            update_data["wpp_number"] = wpp_number
+
         try:
             response = (
                 self.client.table(self.table_name)
