@@ -421,16 +421,13 @@ class LeadSniperWorker:
         last_heartbeat = 0
         error_streak = 0
         
-        # Recuperar contactos/items stuck de sesiones anteriores
+        # Recuperar contactos stuck de sesiones anteriores (solo pool contacts; leads = Finder Bot)
         try:
             rec_contacts = self.repo.recover_stuck_contacts()
-            rec_leads = self.repo.recover_stuck_leads()
             if rec_contacts:
                 log.warning(f"Recuperados {rec_contacts} contactos stuck (scraping → needs_scraping)")
-            if rec_leads:
-                log.warning(f"Recuperados {rec_leads} leads stuck (legacy table)")
         except Exception as e:
-            log.warning(f"No se pudieron recuperar items stuck: {e}")
+            log.warning(f"No se pudieron recuperar contactos stuck: {e}")
         
         log.info("Worker iniciado - entrando en loop principal")
         log.separator()

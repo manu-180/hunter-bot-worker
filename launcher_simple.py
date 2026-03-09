@@ -1,10 +1,9 @@
 """
-Launcher que ejecuta ambos workers en el MISMO proceso usando asyncio.gather.
+Launcher del Hunter Bot (Opción A).
 
-Optimizado v2:
-- Restart automático por worker individual (si uno crashea, no mata al otro)
-- Backoff exponencial en restarts
-- Logging mejorado con timestamps
+Ejecuta solo el worker LeadSniper: scraping de contactos (pool compartido)
+y envío de emails por usuario desde email_queue. El discovery (SerpAPI)
+está en el Finder Bot; este proceso no usa la tabla leads ni SerpAPI.
 """
 import asyncio
 import sys
@@ -12,25 +11,16 @@ import signal
 from datetime import datetime, timezone
 
 
-MAX_RESTARTS = 10  # Máximo de restarts por worker antes de abortar
+MAX_RESTARTS = 10  # Máximo de restarts antes de abortar
 
 
 async def run_with_restart(worker_coro_factory, name: str):
-    """
-    Ejecuta un worker con restart automático y backoff exponencial.
-    
-    Si un worker crashea, se reinicia automáticamente sin afectar al otro.
-    
-    Args:
-        worker_coro_factory: Callable que retorna la coroutine del worker
-        name: Nombre del worker para logging
-    """
+    """Ejecuta un worker con restart automático y backoff exponencial."""
     restarts = 0
     while restarts < MAX_RESTARTS:
         try:
             print(f"[LAUNCHER] {name}: Iniciando (restart #{restarts})...", flush=True)
             await worker_coro_factory()
-            # Si termina sin error, salir del loop
             print(f"[LAUNCHER] {name}: Terminó normalmente", flush=True)
             break
         except KeyboardInterrupt:
@@ -57,24 +47,13 @@ async def run_with_restart(worker_coro_factory, name: str):
 
 
 async def run_all():
-    """Ejecuta ambos workers como tareas asyncio concurrentes con restart."""
+    """Ejecuta el worker LeadSniper (contacts + email_queue)."""
     print("\n" + "=" * 70, flush=True)
-    print("HUNTERBOT - ASYNC LAUNCHER v4 (con restart automático)", flush=True)
+    print("HUNTER BOT - LeadSniper (Opción A: solo scraping + envío)", flush=True)
     print("=" * 70, flush=True)
     print(f"Timestamp: {datetime.now(timezone.utc).isoformat()} UTC", flush=True)
-    print("Modo: asyncio.gather (mismo proceso, restart individual)", flush=True)
+    print("Discovery: Finder Bot. Este proceso: contacts + email_queue.", flush=True)
     print("=" * 70 + "\n", flush=True)
-
-    # Importar módulos
-    print("[LAUNCHER] Importando domain_hunter_worker...", flush=True)
-    try:
-        import domain_hunter_worker
-        print("[LAUNCHER] OK - domain_hunter_worker importado", flush=True)
-    except Exception as e:
-        print(f"[LAUNCHER] ERROR FATAL importando domain_hunter_worker: {e}", flush=True)
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
 
     print("[LAUNCHER] Importando main (LeadSniper)...", flush=True)
     try:
@@ -86,26 +65,19 @@ async def run_all():
         traceback.print_exc()
         sys.exit(1)
 
-    # Setup signal handlers para shutdown graceful
     loop = asyncio.get_event_loop()
     if sys.platform != "win32":
         def signal_handler():
-            print("\n[LAUNCHER] Señal de terminación recibida. Deteniendo workers...", flush=True)
+            print("\n[LAUNCHER] Señal de terminación recibida. Deteniendo...", flush=True)
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, signal_handler)
 
-    # Ejecutar ambos workers concurrentemente con restart individual
-    print("\n[LAUNCHER] Iniciando ambos workers con restart automático...", flush=True)
-    print("[LAUNCHER] 1. DOMAIN-HUNTER: Busca dominios en Google (SerpAPI)", flush=True)
-    print("[LAUNCHER] 2. LEADSNIPER: Scrapea emails y envía", flush=True)
-    print(f"[LAUNCHER] Max restarts por worker: {MAX_RESTARTS}", flush=True)
+    print("[LAUNCHER] Iniciando LeadSniper (scrape contacts + send emails)...", flush=True)
+    print(f"[LAUNCHER] Max restarts: {MAX_RESTARTS}", flush=True)
     print("[LAUNCHER] " + "=" * 70 + "\n", flush=True)
 
     try:
-        await asyncio.gather(
-            run_with_restart(domain_hunter_worker.main, "DOMAIN-HUNTER"),
-            run_with_restart(leadsniper_main.main, "LEADSNIPER"),
-        )
+        await run_with_restart(leadsniper_main.main, "LEADSNIPER")
     except KeyboardInterrupt:
         print("\n[LAUNCHER] Interrumpido por el usuario", flush=True)
     except Exception as e:

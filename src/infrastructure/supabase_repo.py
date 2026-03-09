@@ -560,16 +560,15 @@ class SupabaseRepository:
 
     def get_all_active_configs(self) -> List[HunterConfig]:
         """
-        Get all active HunterBot configurations.
-        
-        Returns:
-            List of active HunterConfig objects
+        Get all Hunter configs with contact engine ON (is_active + bot_enabled).
+        Solo estos usuarios reciben envío desde email_queue.
         """
         try:
             response = (
                 self.client.table(self.config_table)
                 .select("*")
                 .eq("is_active", True)
+                .eq("bot_enabled", True)
                 .execute()
             )
             return [HunterConfig(**row) for row in response.data]
