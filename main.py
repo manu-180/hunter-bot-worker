@@ -207,21 +207,8 @@ class LeadSniperWorker:
                     result.wpp_number,
                     result.meta_title,
                 )
-                if self.hunter_logger:
-                    domain = contact.domain if contact else result.domain
-                    if result.email:
-                        self.hunter_logger.email_found(
-                            user_id="shared",
-                            domain=domain,
-                            email=result.email,
-                            lead_id=str(result.lead_id),
-                        )
-                    else:
-                        self.hunter_logger.email_not_found(
-                            user_id="shared",
-                            domain=domain,
-                            lead_id=str(result.lead_id),
-                        )
+                # No logueamos email_found/email_not_found aquí: el scraping es del pool compartido
+                # y hunter_logs.user_id es UUID NOT NULL; no hay user_id en este contexto.
             else:
                 self.repo.mark_contact_scrape_failed(
                     result.lead_id,
