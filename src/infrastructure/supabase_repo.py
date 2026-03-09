@@ -714,8 +714,23 @@ class SupabaseRepository:
                 .not_.is_("domain", "null")
             )
 
-            # Aplicar filtro de nicho desde config si no tiene segmentos
-            if not segments and config.nicho:
+            # Filtro por segmentos (industries, cities, has_domain) o por config.nicho
+            if segments:
+                # Usar el segmento de mayor prioridad para filtrar
+                seg = segments[0]
+                industries = seg.get("industries")
+                cities = seg.get("cities")
+                has_domain = seg.get("has_domain")
+                if industries:
+                    q = q.in_("industry", industries)
+                if cities:
+                    q = q.in_("city", cities)
+                if has_domain is not None:
+                    if has_domain:
+                        q = q.not_.is_("domain", "null")
+                    else:
+                        q = q.is_("domain", "null")
+            elif config.nicho:
                 q = q.eq("industry", config.nicho)
 
             contacts_r = q.limit(limit * 3).execute()  # buscar más para compensar exclusiones
