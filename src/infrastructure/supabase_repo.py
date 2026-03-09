@@ -764,12 +764,31 @@ class SupabaseRepository:
                 }
                 for cid in new_ids
             ]
-            self.client.table("email_queue").upsert(
-                rows,
-                on_conflict="contact_id,user_id",
-                ignore_duplicates=True,
-            ).execute()
-            return len(new_ids)
+
+            # Insertar en lotes pequeños para evitar payloads grandes y detectar
+            # errores individuales. Ya pre-filtramos duplicados, así que usamos
+            # insert simple en vez de upsert (el upsert requiere que el constraint
+            # exista en la BD, lo que puede fallar si la migración no se aplicó).
+            inserted = 0
+            CHUNK = 20
+            for i in range(0, len(rows), CHUNK):
+                chunk = rows[i : i + CHUNK]
+                try:
+                    self.client.table("email_queue").insert(chunk).execute()
+                    inserted += len(chunk)
+                except Exception as chunk_err:
+                    err_str = str(chunk_err)
+                    # Puede haber un duplicado por race condition → intentar uno a uno
+                    if "duplicate" in err_str.lower() or "unique" in err_str.lower() or "23505" in err_str:
+                        for row in chunk:
+                            try:
+                                self.client.table("email_queue").insert(row).execute()
+                                inserted += 1
+                            except Exception:
+                                pass  # ya estaba en cola, ignorar
+                    else:
+                        log.error(f"Error insertando chunk email_queue(user={user_id[:8]}): {chunk_err}")
+            return inserted
         except Exception as e:
             log.error(f"Error en populate_email_queue(user={user_id}): {e}")
             return 0
