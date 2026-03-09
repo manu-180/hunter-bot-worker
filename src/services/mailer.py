@@ -7,7 +7,9 @@ Implements human-like delays between sends to avoid spam flags.
 """
 
 import asyncio
+import base64
 import html as html_lib
+import mimetypes
 import os
 import random
 import re
@@ -42,6 +44,7 @@ class MailerService:
 
     # Default email subject (Railway deploy force: 2026-02-05)
     DEFAULT_SUBJECT = "Tu web está perdiendo clientes - Elevá su nivel ahora"
+    _METALWAILERS_DOMAIN = "metalwailersinfo.com"
 
     def __init__(
         self,
@@ -79,6 +82,7 @@ class MailerService:
         
         # Load template according to mode (launch = simple, full = branded)
         self._template = self._load_template()
+        self._metalwailers_image_src = self._resolve_metalwailers_image_src()
 
     def _load_template(self) -> str:
         """
@@ -138,13 +142,98 @@ class MailerService:
             return cls._FROM_EMAIL_DEFAULT
         return email.strip()
 
+    @classmethod
+    def _is_metalwailers_sender(cls, from_email: str) -> bool:
+        email = (from_email or "").strip().lower()
+        return email.endswith(f"@{cls._METALWAILERS_DOMAIN}")
+
+    def _resolve_metalwailers_image_src(self) -> str:
+        """
+        Prioridad:
+        1) METALWAILERS_EMAIL_IMAGE_URL (URL pública recomendada)
+        2) METALWAILERS_EMAIL_IMAGE_PATH (archivo local convertido a data URI)
+        3) Ruta por defecto del flyer en panel_bot/assets/images
+        """
+        url = (os.getenv("METALWAILERS_EMAIL_IMAGE_URL") or "").strip()
+        if url:
+            log.info("Metalwailers: usando imagen de email por URL pública")
+            return url
+
+        path_env = (os.getenv("METALWAILERS_EMAIL_IMAGE_PATH") or "").strip()
+        repo_root = Path(__file__).resolve().parents[3]
+        candidates: list[Path] = []
+        if path_env:
+            candidates.append(Path(path_env))
+        candidates.extend([
+            repo_root / "panel_bot" / "assets" / "images" / "WhatsApp Image 2026-03-08 at 1.35.07 AM.jpeg",
+            Path("panel_bot/assets/images/WhatsApp Image 2026-03-08 at 1.35.07 AM.jpeg"),
+        ])
+
+        for path in candidates:
+            try:
+                if path.exists() and path.is_file():
+                    mime = mimetypes.guess_type(str(path))[0] or "image/jpeg"
+                    raw = path.read_bytes()
+                    b64 = base64.b64encode(raw).decode("ascii")
+                    log.info(f"Metalwailers: imagen de email cargada desde {path}")
+                    return f"data:{mime};base64,{b64}"
+            except Exception as exc:
+                log.warning(f"No se pudo leer imagen de Metalwailers en {path}: {exc}")
+
+        log.warning(
+            "Metalwailers: no se encontró imagen local ni URL. "
+            "Definí METALWAILERS_EMAIL_IMAGE_URL para asegurar render en todos los clientes."
+        )
+        return ""
+
+    def _render_metalwailers_image_email(self, sender_name: str, from_email: str) -> str:
+        img_src = self._metalwailers_image_src
+        if not img_src:
+            # Fallback robusto si falta imagen.
+            return f"""<!DOCTYPE html>
+<html lang="es"><body style="margin:0;padding:24px;font-family:Arial,sans-serif;background:#f6f6f6;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:680px;margin:0 auto;background:#ffffff;border:1px solid #e8e8e8;">
+    <tr><td style="padding:24px;">
+      <h2 style="margin:0 0 8px 0;color:#111;">{html_lib.escape(sender_name)}</h2>
+      <p style="margin:0 0 12px 0;color:#222;">Te comparto información de nuestros servicios metalúrgicos.</p>
+      <p style="margin:0;color:#555;font-size:13px;">{html_lib.escape(from_email)}</p>
+    </td></tr>
+  </table>
+</body></html>"""
+
+        return f"""<!DOCTYPE html>
+<html lang="es">
+<body style="margin:0;padding:0;background:#f3f3f3;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f3f3f3;">
+    <tr>
+      <td align="center" style="padding:20px 10px;">
+        <table role="presentation" width="680" cellspacing="0" cellpadding="0" style="width:100%;max-width:680px;background:#ffffff;border:1px solid #e7e7e7;">
+          <tr>
+            <td style="padding:0;">
+              <img src="{img_src}" alt="Metalwailers - Soluciones metalúrgicas a medida"
+                   style="display:block;width:100%;height:auto;border:0;outline:none;text-decoration:none;" />
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>"""
+
     # v8: placeholders del template para renderizado eficiente con loop
     _TEMPLATE_PLACEHOLDERS = (
         "{{company_name}}", "{{domain}}", "{{email}}",
         "{{sender_name}}", "{{sender_email}}", "{{calendar_link}}"
     )
 
-    def _render_template(self, lead: Lead, config: Optional[HunterConfig] = None) -> str:
+    def _render_template(
+        self,
+        lead: Lead,
+        config: Optional[HunterConfig] = None,
+        sender_name: Optional[str] = None,
+        from_email: Optional[str] = None,
+    ) -> str:
         """
         Render the email template with lead data, sanitizing all values.
         
@@ -165,13 +254,17 @@ class MailerService:
         
         # Determine sender settings from config or environment
         if config:
-            sender_name = config.from_name or os.getenv("SENDER_NAME", self.from_name)
+            sender_name = sender_name or config.from_name or os.getenv("SENDER_NAME", self.from_name)
             calendar_link = config.calendar_link or os.getenv("CALENDAR_LINK", "https://www.botrive.com")
-            from_email = self._normalize_from_email(config.from_email or self.from_email) or self.from_email
+            from_email = from_email or self._normalize_from_email(config.from_email or self.from_email) or self.from_email
         else:
-            sender_name = os.getenv("SENDER_NAME", self.from_name)
+            sender_name = sender_name or os.getenv("SENDER_NAME", self.from_name)
             calendar_link = os.getenv("CALENDAR_LINK", "https://www.botrive.com")
-            from_email = self.from_email
+            from_email = from_email or self.from_email
+
+        # Template especial para Metalwailers: flyer de imagen completa.
+        if self._is_metalwailers_sender(from_email):
+            return self._render_metalwailers_image_email(sender_name, from_email)
         
         # v8: dict mapping para renderizado eficiente
         # NOTE: calendar_link usa quote=False porque va en href y & no debe escaparse
@@ -273,9 +366,6 @@ class MailerService:
         try:
             log.email(f"Enviando email a: {lead.email} ({lead.domain})")
             
-            # Render template (unified method handles both default and config)
-            html_content = self._render_template(lead, config)
-            
             # Determine sender info
             if config:
                 from_email = self._normalize_from_email(config.from_email or self.from_email) or self.from_email
@@ -285,6 +375,14 @@ class MailerService:
                 from_email = self.from_email
                 from_name = self.from_name
                 subject = self._get_subject(lead)
+
+            # Render template (puede elegir HTML especial por remitente/dominio)
+            html_content = self._render_template(
+                lead,
+                config,
+                sender_name=from_name,
+                from_email=from_email,
+            )
             
             # Prepare email params
             params = {
@@ -372,9 +470,12 @@ class MailerService:
         return self.DEFAULT_SUBJECT
 
     async def _human_delay(self) -> None:
-        """Wait a random human-like delay between emails."""
+        """Wait between emails (cooldown). Si min==max==600, logea '10 min'."""
         delay = random.randint(self.min_delay, self.max_delay)
-        log.info(f"Esperando {delay}s antes del próximo envío...")
+        if delay >= 60:
+            log.info(f"Cooldown: esperando {delay // 60} min antes del próximo email...")
+        else:
+            log.info(f"Esperando {delay}s antes del próximo envío...")
         await asyncio.sleep(delay)
 
     async def send_batch(self, leads: List[Lead]) -> List[EmailResult]:

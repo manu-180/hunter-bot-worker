@@ -122,13 +122,21 @@ class WppFollowupSender:
     # Public API
     # ─────────────────────────────────────────────────────────────────────────
 
-    async def send(self, wpp_number: str, company_name: str) -> bool:
+    async def send(
+        self,
+        wpp_number: str,
+        company_name: str,
+        from_number: Optional[str] = None,
+    ) -> bool:
         """
         Envía el mensaje de seguimiento de WhatsApp.
 
         Args:
             wpp_number: Número de WPP del destinatario (cualquier formato aceptado).
             company_name: Nombre de la empresa / lead para personalizar el template.
+            from_number: Número desde el que enviar (ej. whatsapp:+54911...). Si no se pasa,
+                         se usa el de la config del Hunter (hunter_configs.from_wpp_number)
+                         o el de env (HUNTER_FROM_WPP_NUMBER).
 
         Returns:
             True si el mensaje fue enviado exitosamente, False en cualquier otro caso.
@@ -143,12 +151,16 @@ class WppFollowupSender:
             )
             return False
 
+        from_num = (from_number or self._from_number).strip()
+        if not from_num or not from_num.lower().startswith("whatsapp:"):
+            from_num = self._normalize_phone(from_num) or self._from_number
+
         content_sid = self._next_template_sid()
         content_variables = json.dumps({"1": company_name or "su empresa"})
 
         url = TWILIO_MESSAGES_URL.format(account_sid=self._account_sid)
         payload = {
-            "From": self._from_number,
+            "From": from_num,
             "To": to_number,
             "ContentSid": content_sid,
             "ContentVariables": content_variables,

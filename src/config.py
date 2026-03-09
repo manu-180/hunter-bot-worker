@@ -28,15 +28,17 @@ class BotConfig:
     """Centralized bot configuration with env-var overrides."""
 
     # ── Business hours (Argentina time) ──────────────────────────────────
+    # Igual que Sender Bot: 8:00 a 19:00. Solo envía emails en este horario.
     BUSINESS_HOURS_START: int = _int("HUNTER_BUSINESS_HOURS_START", 8)
-    BUSINESS_HOURS_END: int = _int("HUNTER_BUSINESS_HOURS_END", 18)
+    BUSINESS_HOURS_END: int = _int("HUNTER_BUSINESS_HOURS_END", 19)
 
     # ── LeadSniper Worker ────────────────────────────────────────────────
     SCRAPE_BATCH_SIZE: int = _int("HUNTER_SCRAPE_BATCH_SIZE", 5)
-    EMAIL_BATCH_SIZE: int = _int("HUNTER_EMAIL_BATCH_SIZE", 3)
+    EMAIL_BATCH_SIZE: int = _int("HUNTER_EMAIL_BATCH_SIZE", 1)  # 1 por ciclo; el cooldown limita el total
     SCRAPE_TIMEOUT: int = _int("HUNTER_SCRAPE_TIMEOUT", 20)
-    EMAIL_MIN_DELAY: int = _int("HUNTER_EMAIL_MIN_DELAY", 10)
-    EMAIL_MAX_DELAY: int = _int("HUNTER_EMAIL_MAX_DELAY", 30)
+    # Cooldown entre emails: 10 min (como Sender Bot). ~6/hora × 11h = ~66 emails/día máx.
+    EMAIL_MIN_DELAY: int = _int("HUNTER_EMAIL_MIN_DELAY", 600)
+    EMAIL_MAX_DELAY: int = _int("HUNTER_EMAIL_MAX_DELAY", 600)
     IDLE_SLEEP_SECONDS: int = _int("HUNTER_IDLE_SLEEP", 10)
     HEARTBEAT_INTERVAL: int = _int("HUNTER_HEARTBEAT_INTERVAL", 60)
 

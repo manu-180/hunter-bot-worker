@@ -1,16 +1,16 @@
 """
-Domain Models - Pydantic definitions for LeadSniper.
+Domain Models - Pydantic definitions para Contact Engine.
 
-This module contains all the data models used throughout the application,
-providing validation and serialization capabilities.
+Pool compartido de contactos (contacts) + cola por usuario (email_queue).
+Los modelos Lead/LeadStatus se mantienen por compatibilidad temporal.
 """
 
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import List, Optional
 from uuid import UUID
 
-from pydantic import BaseModel, Field, EmailStr, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 class LeadStatus(str, Enum):
@@ -97,6 +97,7 @@ class HunterConfig(BaseModel):
     resend_api_key: Optional[str] = None
     from_email: Optional[str] = None
     from_name: Optional[str] = "Mi Empresa"
+    from_wpp_number: Optional[str] = None  # WhatsApp de seguimiento (ej. whatsapp:+5491125330794)
     calendar_link: Optional[str] = None
     email_subject: Optional[str] = None
     is_active: bool = False
@@ -171,16 +172,84 @@ class ScrapingResult(BaseModel):
 
 
 class EmailResult(BaseModel):
-    """
-    Result of an email sending operation.
-    
-    Attributes:
-        lead_id: The UUID of the lead
-        success: Whether the email was sent successfully
-        resend_id: The ID returned by Resend API (if successful)
-        error: Error message if sending failed
-    """
+    """Result of an email sending operation."""
     lead_id: UUID
     success: bool
     resend_id: Optional[str] = None
     error: Optional[str] = None
+
+
+# ── Nuevos modelos: pool compartido ──────────────────────────────────────────
+
+class ContactScrapeStatus(str, Enum):
+    NEEDS_SCRAPING = "needs_scraping"
+    SCRAPING       = "scraping"
+    DONE           = "done"       # email encontrado
+    NO_EMAIL       = "no_email"   # scrapeado, sin email
+    FAILED         = "failed"
+
+
+class Contact(BaseModel):
+    """Empresa en el pool compartido (sin user_id)."""
+    id:            UUID
+    company_name:  Optional[str] = None
+    domain:        Optional[str] = None
+    email:         Optional[str] = None
+    phone:         Optional[str] = None
+    meta_title:    Optional[str] = None
+    industry:      Optional[str] = None
+    city:          Optional[str] = None
+    country:       str = "Argentina"
+    scrape_status: ContactScrapeStatus = ContactScrapeStatus.NEEDS_SCRAPING
+    scrape_error:  Optional[str] = None
+    source:        str = "finder"
+    created_at:    datetime
+    updated_at:    datetime
+    scraped_at:    Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class EmailQueueStatus(str, Enum):
+    PENDING  = "pending"
+    SENDING  = "sending"
+    SENT     = "sent"
+    FAILED   = "failed"
+    BOUNCED  = "bounced"
+
+
+class EmailQueueItem(BaseModel):
+    """Ítem de la cola de envío de un usuario (uno por empresa por usuario)."""
+    id:            UUID
+    contact_id:    UUID
+    user_id:       UUID
+    from_email:    Optional[str] = None
+    status:        EmailQueueStatus = EmailQueueStatus.PENDING
+    resend_id:     Optional[str] = None
+    error_msg:     Optional[str] = None
+    attempt_count: int = 0
+    queued_at:     datetime
+    sent_at:       Optional[datetime] = None
+    # Joined from contacts (populated by repo when needed)
+    contact:       Optional[Contact] = None
+
+    class Config:
+        from_attributes = True
+
+
+class ContactSegment(BaseModel):
+    """Filtro de prioridad: qué empresas del pool le interesan a un usuario."""
+    id:         UUID
+    user_id:    UUID
+    name:       str
+    industries: Optional[List[str]] = None
+    cities:     Optional[List[str]] = None
+    countries:  Optional[List[str]] = None
+    has_domain: Optional[bool] = None
+    priority:   int = 0
+    is_active:  bool = True
+    created_at: datetime
+
+    class Config:
+        from_attributes = True

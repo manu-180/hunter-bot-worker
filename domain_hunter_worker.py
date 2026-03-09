@@ -452,62 +452,67 @@ def _is_assistify_nicho(nicho: str, type_raw: Optional[str] = None,
 # =============================================================================
 
 # Nichos con ALTA probabilidad de querer un bot asistente virtual 24/7
-# Ordenados de MAYOR a MENOR probabilidad de conversión
-# Criterios: necesitan captar leads 24/7, agendar turnos/reuniones,
-# responder consultas fuera de horario, y tienen margen para invertir.
+# Prioridad: nichos que favorecen a los 3 (Botlode + Metalwailers primero; Assistify ya tiene cola).
+# Ver docs/NICHOS_METALWAILERS_ASSISTIFY_BOTLODE.md
 NICHOS = [
+    # ========== BOTLODE + METALWAILERS (y a veces Assistify) — prioridad ==========
+    "constructoras",                        # Presupuestos, obra; Metalwailers + Botlode
+    "estudios de arquitectura",              # Proyectos, presupuestos; Metalwailers + Botlode
+    "talleres metalmecanicos",              # Cliente ideal Metalwailers, a veces cursos → Assistify
+    "herrerias",                            # Rejas, portones, estructuras
+    "rejas y portones",                     # Metalwailers + cerramientos
+    "industrias metalurgicas",              # Corte, plegado, soldadura
+    "estructuras metalicas",                # Obra, construcción
+    "carrocerias y chapistas",              # Chapa, soldadura
+    "centros de capacitacion",              # Cursos, oficios; Assistify + Botlode + a veces Metalwailers
+    "gimnasios",                            # Membresías, clases; Assistify + Botlode
+    "escuelas de musica y arte",            # Inscripciones; Assistify + Botlode
+    "academias e institutos de idiomas",    # Inscripciones, niveles; Assistify + Botlode
+
     # ========== TIER 1 - MÁXIMA PROBABILIDAD (leads 24/7 + alto ticket) ==========
-    "inmobiliarias",                        # 1. Consultas de propiedades a toda hora, alto ticket
-    "clinicas dentales",                    # 2. Turnos, urgencias, presupuestos 24/7
-    "concesionarias de autos",              # 3. Alto ticket, test drives, cotizaciones
-    "centros de estetica",                  # 4. Turnos online, alta competencia digital
-    "clinicas y centros medicos",           # 5. Turnos médicos, consultas de pacientes
-    "hoteles",                              # 6. Reservas 24/7, huéspedes en distintas zonas horarias
-    "agencias de marketing digital",        # 7. Tech-savvy, potenciales revendedores del bot
-    "estudios juridicos",                   # 8. Consultas legales, agendar reuniones, alto ticket
-    "consultorios medicos",                 # 9. Turnos, preguntas frecuentes de pacientes
-    "estudios contables",                   # 10. Consultas de clientes, picos estacionales
+    "inmobiliarias",
+    "clinicas dentales",
+    "concesionarias de autos",
+    "centros de estetica",
+    "clinicas y centros medicos",
+    "hoteles",
+    "agencias de marketing digital",
+    "estudios juridicos",
+    "consultorios medicos",
+    "estudios contables",
 
-    # ========== TIER 2 - ALTA PROBABILIDAD (servicios + agenda de turnos) ==========
-    "aseguradoras",                         # 11. Cotizaciones automáticas, leads constantes
-    "gimnasios",                            # 12. Membresías, horarios de clases, promos
-    "agencias de viajes",                   # 13. Consultas de viajes a toda hora
-    "spa y centros de bienestar",           # 14. Turnos, paquetes, disponibilidad
-    "veterinarias",                         # 15. Turnos, urgencias, consultas
-    "constructoras",                        # 16. Presupuestos, consultas de obra
-    "psicologos y terapeutas",             # 17. Agendar sesiones, privacidad en consultas
-    "estudios de arquitectura",             # 18. Consultas de proyecto, presupuestos
-    "academias e institutos de idiomas",    # 19. Inscripciones, niveles, horarios
-    "centros de capacitacion",              # 20. Cursos, inscripciones, cronogramas
+    # ========== TIER 2 - ALTA PROBABILIDAD ==========
+    "aseguradoras",
+    "agencias de viajes",
+    "spa y centros de bienestar",
+    "veterinarias",
+    "psicologos y terapeutas",
+    "salones de fiestas y eventos",
+    "fotografos profesionales",
+    "empresas de seguridad",
+    "consultoras",
+    "restaurantes",
+    "rent a car",
+    "nutricionistas",
+    "kinesiologos y fisioterapeutas",
+    "catering",
+    "organizadores de eventos",
 
-    # ========== TIER 3 - BUENA PROBABILIDAD (eventos + reservas + consultas) ==========
-    "salones de fiestas y eventos",         # 21. Disponibilidad, presupuestos, visitas
-    "fotografos profesionales",             # 22. Reservar sesiones, portafolio
-    "empresas de seguridad",                # 23. Cotización de servicios de monitoreo
-    "consultoras",                          # 24. Captación de leads, agendar reuniones
-    "restaurantes",                         # 25. Reservas de mesa, menú, eventos
-    "rent a car",                           # 26. Disponibilidad, reservas, precios
-    "nutricionistas",                       # 27. Turnos, planes, consultas
-    "kinesiologos y fisioterapeutas",       # 28. Turnos de rehabilitación
-    "catering",                             # 29. Presupuestos de eventos, menús
-    "organizadores de eventos",             # 30. Consultas, disponibilidad, cotización
-
-    # ========== TIER 4 - PROBABILIDAD MEDIA-ALTA (comercio + servicios) ==========
-    "empresas de software",                 # 31. Tech-savvy, demos, onboarding
-    "cabañas y alojamientos turisticos",    # 32. Reservas, disponibilidad, temporadas
-    "peluquerias y barberias",              # 33. Turnos, servicios, precios
-    "empresas de limpieza",                 # 34. Cotización de servicios
-    "decoracion y diseño de interiores",    # 35. Consultas de proyecto, presupuestos
-    "opticas",                              # 36. Turnos, stock de lentes
-    "productoras audiovisuales",            # 37. Consultas de producción, presupuestos
-    "agencias de publicidad",               # 38. Captación de leads, servicios
-    "mueblerias",                           # 39. Consultas de productos, delivery
-    "joyerias",                             # 40. Alto ticket, consultas, encargos
-    "farmacias",                            # 41. Disponibilidad, turnos de vacunación
-    "floristerias",                         # 42. Pedidos, delivery, disponibilidad
-    "escuelas de musica y arte",            # 43. Inscripciones, horarios
-    "empresas de mudanzas",                 # 44. Cotizaciones, agendamiento
-    "laboratorios de analisis clinicos",    # 45. Turnos, preparación, resultados
+    # ========== TIER 3 - MEDIA-ALTA ==========
+    "empresas de software",
+    "cabañas y alojamientos turisticos",
+    "peluquerias y barberias",
+    "empresas de limpieza",
+    "decoracion y diseño de interiores",
+    "opticas",
+    "productoras audiovisuales",
+    "agencias de publicidad",
+    "mueblerias",
+    "joyerias",
+    "farmacias",
+    "floristerias",
+    "empresas de mudanzas",
+    "laboratorios de analisis clinicos",
 ]
 
 # is_business_hours() imported from src.utils.timezone (handles DST correctly)
@@ -694,7 +699,7 @@ class DomainHunterWorker:
                 await self._log_to_user(
                     user_id=user_id, level="success", action="domain_added",
                     domain="system",
-                    message=f"✅ {len(domains)} dominios nuevos agregados a la cola"
+                    message=f"✅ {len(domains)} dominios nuevos agregados a la cola (por búsqueda: 1 crédito)"
                 )
                 self._searches_since_credit_check += 1
                 
@@ -775,6 +780,13 @@ class DomainHunterWorker:
             log.info(
                 f"[{user_id[:8]}] 📈 {len(truly_new)}/{len(domains_found)} nuevos ({new_ratio:.0%}) | "
                 f"Cache[{user_id[:8]}]: {len(user_cache)}"
+            )
+            # Aclarar por qué "agregados" suele ser 8–20 y no 40–60: cada línea = 1 búsqueda (1 crédito).
+            # Maps: ~20 resultados por página, solo una parte tiene website. Web: muchas URLs = mismo dominio (dedup).
+            to_save_count = len(truly_new) if truly_new else len(domains_found)
+            log.info(
+                f"[{user_id[:8]}] 📦 Por esta búsqueda (1 crédito): {len(domains_found)} extraídos → "
+                f"{len(truly_new)} nuevos (resto ya en cache) → se guardan {to_save_count}"
             )
             
             # Lógica de agotamiento inteligente
@@ -1631,20 +1643,18 @@ class DomainHunterWorker:
     def _get_user_search_params(self, user_id: str) -> tuple:
         """Obtiene nicho/pais/ciudades del config del usuario + todos los globales.
         
-        Prioriza nichos Assistify (clases, gimnasios, cerámica, etc.) para poder
-        ofrecer la app de paso; luego el nicho del usuario; luego el resto.
+        Prioridad Botlode + Metalwailers: orden de NICHOS (constructoras, talleres, herrerías, etc. primero).
+        El nicho del usuario va primero si está configurado; luego el resto en orden de NICHOS.
         """
         config = self.active_users.get(user_id, {})
         
-        # Nicho: usuario primero, después todos los que coinciden con Assistify, después el resto
+        # Nicho: usuario primero si existe; luego el resto en orden NICHOS (ya priorizado para Botlode+Metalwailers)
         user_nicho = config.get('nicho')
         rest = [n for n in NICHOS if n != user_nicho]
-        assistify_rest = [n for n in rest if _is_assistify_nicho(n)]
-        other_rest = [n for n in rest if not _is_assistify_nicho(n)]
         if user_nicho:
-            nichos_pool = [user_nicho] + assistify_rest + other_rest
+            nichos_pool = [user_nicho] + rest
         else:
-            nichos_pool = assistify_rest + other_rest
+            nichos_pool = list(NICHOS)
         
         # País: usar el del usuario si existe, sino aleatorio global
         user_pais = config.get('pais')
@@ -1671,8 +1681,7 @@ class DomainHunterWorker:
         """
         try:
             nichos_pool, paises_pool, user_ciudades = self._get_user_search_params(user_id)
-            assistify_nichos = [n for n in nichos_pool if _is_assistify_nicho(n)]
-            nicho = random.choice(assistify_nichos) if assistify_nichos else random.choice(nichos_pool)
+            nicho = random.choice(nichos_pool)
             pais = random.choice(paises_pool)
             
             if user_ciudades:

@@ -179,79 +179,56 @@ class LeadSniperWorker:
 
     async def _process_scraping(self) -> int:
         """
-        Process pending domains for scraping (multi-tenant).
-        
-        Returns:
-            Number of domains processed
+        Fase 1: raspa contactos del pool compartido que aún no tienen email.
+        Opera sobre `contacts` (sin user_id) → todos los usuarios se benefician.
         """
-        # Fetch pending domains from all users
-        pending_leads = self.repo.fetch_pending_domains_all_users(limit=self.scrape_batch_size)
-        
-        if not pending_leads:
+        contacts_to_scrape = self.repo.fetch_contacts_to_scrape(limit=self.scrape_batch_size)
+        if not contacts_to_scrape:
             return 0
-        
-        log.scraping(f"Procesando {len(pending_leads)} dominios pendientes")
-        
-        # Mark as scraping and log for each user
-        for lead in pending_leads:
-            self.repo.mark_as_scraping(lead.id)
-            if self.hunter_logger and lead.user_id:
-                self.hunter_logger.scrape_start(
-                    user_id=str(lead.user_id),
-                    domain=lead.domain,
-                    lead_id=str(lead.id)
-                )
-        
-        # Scrape all domains
-        results = await self.scraper.scrape_batch(pending_leads)
-        
-        # Build O(1) lookup dict instead of O(n) search per result
-        leads_by_id = {l.id: l for l in pending_leads}
-        
-        # Update database with results and log for each user
+
+        log.scraping(f"Scrapeando {len(contacts_to_scrape)} contactos del pool compartido")
+
+        # Bloqueo optimista: marcar como 'scraping'
+        locked = [c for c in contacts_to_scrape if self.repo.mark_contact_scraping(c.id)]
+        if not locked:
+            return 0
+
+        # El Scraper acepta cualquier objeto con .id y .domain — Contact lo cumple
+        results = await self.scraper.scrape_batch(locked)  # type: ignore[arg-type]
+
+        contacts_by_id = {c.id: c for c in locked}
+
         for result in results:
-            # Get the lead to access user_id (O(1) lookup)
-            lead = leads_by_id.get(result.lead_id)
-            user_id = str(lead.user_id) if lead and lead.user_id else None
-            
+            contact = contacts_by_id.get(result.lead_id)
             if result.success:
-                self.repo.mark_as_scraped(
+                self.repo.mark_contact_scraped(
                     result.lead_id,
                     result.email,
-                    result.meta_title,
                     result.wpp_number,
+                    result.meta_title,
                 )
-                
-                # Log result for user
-                if self.hunter_logger and user_id:
+                if self.hunter_logger:
+                    domain = contact.domain if contact else result.domain
                     if result.email:
                         self.hunter_logger.email_found(
-                            user_id=user_id,
-                            domain=result.domain,
+                            user_id="shared",
+                            domain=domain,
                             email=result.email,
-                            lead_id=str(result.lead_id)
+                            lead_id=str(result.lead_id),
                         )
                     else:
                         self.hunter_logger.email_not_found(
-                            user_id=user_id,
-                            domain=result.domain,
-                            lead_id=str(result.lead_id)
+                            user_id="shared",
+                            domain=domain,
+                            lead_id=str(result.lead_id),
                         )
             else:
-                self.repo.mark_as_failed(
+                self.repo.mark_contact_scrape_failed(
                     result.lead_id,
-                    result.error or "Unknown scraping error"
+                    result.error or "Error de scraping",
                 )
-                
-                if self.hunter_logger and user_id:
-                    self.hunter_logger.scrape_error(
-                        user_id=user_id,
-                        domain=result.domain,
-                        error=result.error or "Error desconocido",
-                        lead_id=str(result.lead_id)
-                    )
-        
-        return len(pending_leads)
+
+        return len(locked)
 
     def _get_user_config(self, user_id: str):
         """Get user config from TTL cache or database."""
@@ -265,139 +242,166 @@ class LeadSniperWorker:
 
     async def _process_emails(self) -> int:
         """
-        Process queued emails for sending (multi-tenant).
-        
-        Each user's emails are sent with their own Resend API key.
-        
-        HORARIO INTELIGENTE: Solo envía emails entre 8 AM - 18:00 (hora Argentina)
-        para maximizar tasa de apertura y mantener profesionalismo.
-        
-        LÍMITE WARM-UP: Si ya se enviaron MAX_TOTAL_EMAILS_SENT (p. ej. 20), no se
-        envían más emails para que Outlook/Gmail confíen en el dominio.
-        
-        Returns:
-            Number of emails processed
-        """
-        # Reencolar leads warm-up enviados hace +24h para volver a enviarles al día siguiente
-        self.repo.requeue_old_warmup_leads(hours=24)
+        Fase 2 + 3: para cada usuario con bot activo:
+          - Encola contactos del pool que aún no recibieron su email (populate_email_queue)
+          - Envía los pendientes de email_queue con sus credenciales propias
 
-        # Límite warm-up: solo cuenta envíos a dominios warm-up (warmup-*.getbotlode.com)
-        sent_count = self.repo.get_sent_count(warmup_only=True)
-        if sent_count >= BotConfig.MAX_TOTAL_EMAILS_SENT:
-            log.info(
-                f"⏸️ Límite warm-up alcanzado ({sent_count}/{BotConfig.MAX_TOTAL_EMAILS_SENT} enviados). "
-                "No se envían más emails para confianza del dominio."
-            )
-            return 0
-        
+        Respeta horario laboral (Argentina) y límite warm-up.
+        """
         # 🕐 VERIFICAR HORARIO LABORAL (DST-aware)
         if not is_business_hours(BUSINESS_HOURS_START, BUSINESS_HOURS_END):
             log.warning(
                 f"⏸️  FUERA DE HORARIO LABORAL (Argentina: {format_argentina_time()}). "
                 f"Pausando envío de emails hasta las {BUSINESS_HOURS_START}:00 AM..."
             )
-            return 0  # No procesar emails, pero continuar el loop
-        
-        # Fetch queued emails from all users
-        queued_leads = self.repo.fetch_queued_emails_all_users(limit=self.email_batch_size)
-        
-        if not queued_leads:
             return 0
-        
-        log.email(f"Procesando {len(queued_leads)} emails en cola")
-        
-        # Process one at a time with delays
-        for lead in queued_leads:
-            user_id = str(lead.user_id) if lead.user_id else None
-            
-            if not user_id:
-                log.warning(f"Lead {lead.id} sin user_id, saltando")
+
+        # Obtener todos los usuarios con bot activo y configuración completa
+        active_configs = self.repo.get_all_active_configs()
+        if not active_configs:
+            return 0
+
+        total_sent = 0
+
+        for config in active_configs:
+            user_id = str(config.user_id)
+
+            if not config.bot_enabled:
                 continue
-            
-            # Get user's config
-            config = self._get_user_config(user_id)
-            
-            if not config or not config.is_configured:
-                # User hasn't configured Resend
-                log.warning(f"Usuario {user_id} sin configuración de Resend")
-                self.repo.mark_as_failed(lead.id, "Resend no configurado")
-                
-                if self.hunter_logger:
-                    self.hunter_logger.config_missing(
-                        user_id=user_id,
-                        domain=lead.domain,
-                        lead_id=str(lead.id)
-                    )
+            if not config.is_configured:
+                log.warning(f"[{user_id[:8]}] Sin configuración de Resend, saltando")
                 continue
-            
-            # Mark as sending (optimistic lock)
-            if not self.repo.mark_as_sending(lead.id):
-                log.info(f"Lead {lead.id} ya siendo procesado, saltando")
-                continue  # Skip if already being processed
-            
-            # Log send start
-            if self.hunter_logger:
-                self.hunter_logger.send_start(
-                    user_id=user_id,
-                    domain=lead.domain,
-                    email=lead.email or "",
-                    lead_id=str(lead.id)
+
+            # Límite warm-up por usuario (dominios warmup-*)
+            sent_count = self.repo.get_sent_count(warmup_only=True)
+            if sent_count >= BotConfig.MAX_TOTAL_EMAILS_SENT:
+                log.info(
+                    f"[{user_id[:8]}] Límite warm-up ({sent_count}/{BotConfig.MAX_TOTAL_EMAILS_SENT}), "
+                    "saltando envíos."
                 )
-            
-            # Send email using user's config
-            result = await self.mailer.send_with_config(lead, config)
-            
-            # Update database and log result
-            if result.success:
-                self.repo.mark_as_sent(lead.id)
+                continue
+
+            # Encolar nuevos contactos del pool para este usuario (idempotente)
+            new_queued = self.repo.populate_email_queue(
+                user_id=user_id,
+                config=config,
+                limit=self.email_batch_size * 5,
+            )
+            if new_queued:
+                log.info(f"[{user_id[:8]}] {new_queued} nuevos contactos encolados para envío")
+
+            # Leer cola de envío de este usuario
+            queue_items = self.repo.fetch_email_queue_for_user(
+                user_id=user_id,
+                limit=self.email_batch_size,
+            )
+            if not queue_items:
+                continue
+
+            log.email(f"[{user_id[:8]}] Enviando {len(queue_items)} emails desde {config.from_email}")
+
+            for item in queue_items:
+                contact = item.contact
+                if not contact or not contact.email:
+                    log.warning(f"[{user_id[:8]}] item {item.id} sin contacto/email, saltando")
+                    continue
+
+                # Bloqueo optimista
+                if not self.repo.mark_queue_item_sending(item.id):
+                    continue
+
+                # Crear Lead temporal para el mailer (duck-typing sobre campos comunes)
+                from src.domain.models import Lead, LeadStatus
+                fake_lead = Lead(
+                    id=item.id,
+                    user_id=item.user_id,
+                    domain=contact.domain or "",
+                    email=contact.email,
+                    wpp_number=contact.phone,
+                    meta_title=contact.meta_title,
+                    status=LeadStatus.QUEUED_FOR_SEND,
+                    created_at=item.queued_at,
+                    updated_at=item.queued_at,
+                )
 
                 if self.hunter_logger:
-                    self.hunter_logger.send_success(
+                    self.hunter_logger.send_start(
                         user_id=user_id,
-                        domain=lead.domain,
-                        email=lead.email or "",
-                        lead_id=str(lead.id)
+                        domain=contact.domain or "",
+                        email=contact.email,
+                        lead_id=str(item.id),
                     )
 
-                # WPP follow-up: si se encontró un número de WhatsApp durante el scraping,
-                # enviamos un mensaje informando que acaban de recibir un email.
-                if self.wpp_sender and lead.wpp_number:
-                    company_name = (
-                        lead.meta_title
-                        or lead.domain.split(".")[0].replace("-", " ").title()
-                    )
-                    await self.wpp_sender.send(lead.wpp_number, company_name)
+                result = await self.mailer.send_with_config(fake_lead, config)
+
+                if result.success:
+                    self.repo.mark_queue_item_sent(item.id, resend_id=result.resend_id)
+                    total_sent += 1
+
                     if self.hunter_logger:
-                        self.hunter_logger.wpp_followup_sent(
+                        self.hunter_logger.send_success(
                             user_id=user_id,
-                            domain=lead.domain,
-                            wpp_number=lead.wpp_number,
-                            lead_id=str(lead.id)
+                            domain=contact.domain or "",
+                            email=contact.email,
+                            lead_id=str(item.id),
                         )
-            else:
-                self.repo.mark_as_failed(
-                    lead.id,
-                    result.error or "Unknown email error"
-                )
-                
-                if self.hunter_logger:
-                    self.hunter_logger.send_failed(
-                        user_id=user_id,
-                        domain=lead.domain,
-                        email=lead.email or "",
+
+                    # WPP follow-up: si el contacto tiene teléfono, enviar WPP y registrar
+                    if self.wpp_sender and contact.phone:
+                        company_name = (
+                            contact.meta_title
+                            or contact.company_name
+                            or (contact.domain or "").split(".")[0].replace("-", " ").title()
+                        )
+                        from_wpp = config.from_wpp_number or None
+                        wpp_sent = await self.wpp_sender.send(
+                            contact.phone, company_name, from_number=from_wpp
+                        )
+                        if wpp_sent:
+                            # Registrar el WPP en whatsapp_outbox para que sea visible en Sender Bot
+                            self.repo.register_wpp_followup(
+                                contact_id=str(contact.id),
+                                user_id=user_id,
+                                phone=contact.phone,
+                                company_name=company_name,
+                                from_number=from_wpp or "",
+                            )
+                        if self.hunter_logger:
+                            self.hunter_logger.wpp_followup_sent(
+                                user_id=user_id,
+                                domain=contact.domain or "",
+                                wpp_number=contact.phone,
+                                lead_id=str(item.id),
+                            )
+                else:
+                    self.repo.mark_queue_item_failed(
+                        item.id,
                         error=result.error or "Error desconocido",
-                        lead_id=str(lead.id)
+                        attempt_count=item.attempt_count + 1,
                     )
-        
-        return len(queued_leads)
+                    if self.hunter_logger:
+                        self.hunter_logger.send_failed(
+                            user_id=user_id,
+                            domain=contact.domain or "",
+                            email=contact.email,
+                            error=result.error or "Error desconocido",
+                            lead_id=str(item.id),
+                        )
+
+        return total_sent
 
     async def _log_heartbeat(self) -> None:
-        """Log periodic heartbeat with current stats."""
+        """Log periodic heartbeat con stats del nuevo modelo contacts + email_queue."""
         try:
-            stats = self.repo.get_stats()
-            pending = stats.get("pending", 0)
-            queued = stats.get("queued_for_send", 0)
-            log.heartbeat(pending, queued)
+            # Pool compartido
+            contacts_pending = len(self.repo.fetch_contacts_to_scrape(limit=1000))
+            # Cola de envío global (todos los usuarios)
+            try:
+                r = self.repo.client.table("email_queue").select("id", count="exact").eq("status", "pending").execute()
+                email_pending = r.count or 0
+            except Exception:
+                email_pending = 0
+            log.heartbeat(contacts_pending, email_pending)
         except Exception as e:
             log.warning(f"Error obteniendo estadísticas: {e}")
 
@@ -417,13 +421,16 @@ class LeadSniperWorker:
         last_heartbeat = 0
         error_streak = 0
         
-        # Recover any leads stuck from previous crashes
+        # Recuperar contactos/items stuck de sesiones anteriores
         try:
-            recovered = self.repo.recover_stuck_leads()
-            if recovered:
-                log.warning(f"Recuperados {recovered} leads stuck de sesión anterior")
+            rec_contacts = self.repo.recover_stuck_contacts()
+            rec_leads = self.repo.recover_stuck_leads()
+            if rec_contacts:
+                log.warning(f"Recuperados {rec_contacts} contactos stuck (scraping → needs_scraping)")
+            if rec_leads:
+                log.warning(f"Recuperados {rec_leads} leads stuck (legacy table)")
         except Exception as e:
-            log.warning(f"No se pudieron recuperar leads stuck: {e}")
+            log.warning(f"No se pudieron recuperar items stuck: {e}")
         
         log.info("Worker iniciado - entrando en loop principal")
         log.separator()

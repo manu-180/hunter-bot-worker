@@ -13,7 +13,10 @@ from uuid import UUID
 from supabase import create_client, Client
 from dotenv import load_dotenv
 
-from src.domain.models import Lead, LeadStatus, LeadUpdate, ScrapingResult, HunterConfig
+from src.domain.models import (
+    Lead, LeadStatus, LeadUpdate, ScrapingResult, HunterConfig,
+    Contact, ContactScrapeStatus, EmailQueueItem, EmailQueueStatus, ContactSegment,
+)
 from src.utils.logger import log
 
 # Maximum time a lead can stay in a transient state before being considered stuck
@@ -573,3 +576,336 @@ class SupabaseRepository:
         except Exception as e:
             log.error(f"Error en get_all_active_configs: {e}")
             return []
+
+    # =========================================================================
+    # Contacts: pool compartido (Opción A)
+    # =========================================================================
+
+    def fetch_contacts_to_scrape(self, limit: int = 10) -> List[Contact]:
+        """Contactos con dominio que aún no tienen email (needs_scraping)."""
+        try:
+            r = (
+                self.client.table("contacts")
+                .select("*")
+                .eq("scrape_status", ContactScrapeStatus.NEEDS_SCRAPING.value)
+                .not_.is_("domain", "null")
+                .order("created_at", desc=False)
+                .limit(limit)
+                .execute()
+            )
+            return [Contact(**row) for row in r.data]
+        except Exception as e:
+            log.error(f"Error en fetch_contacts_to_scrape: {e}")
+            return []
+
+    def mark_contact_scraping(self, contact_id: UUID) -> bool:
+        """Bloqueo optimista: marca el contacto como siendo scrapeado."""
+        try:
+            r = (
+                self.client.table("contacts")
+                .update({"scrape_status": ContactScrapeStatus.SCRAPING.value})
+                .eq("id", str(contact_id))
+                .eq("scrape_status", ContactScrapeStatus.NEEDS_SCRAPING.value)
+                .execute()
+            )
+            return len(r.data) > 0
+        except Exception as e:
+            log.error(f"Error en mark_contact_scraping({contact_id}): {e}")
+            return False
+
+    def mark_contact_scraped(
+        self,
+        contact_id: UUID,
+        email: Optional[str],
+        phone: Optional[str] = None,
+        meta_title: Optional[str] = None,
+    ) -> bool:
+        """Actualiza el contacto con los datos scrapeados."""
+        from datetime import timezone
+        new_status = (
+            ContactScrapeStatus.DONE.value if email
+            else ContactScrapeStatus.NO_EMAIL.value
+        )
+        payload = {
+            "email": email,
+            "meta_title": meta_title,
+            "scrape_status": new_status,
+            "scraped_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if phone:
+            payload["phone"] = phone
+        try:
+            r = (
+                self.client.table("contacts")
+                .update(payload)
+                .eq("id", str(contact_id))
+                .execute()
+            )
+            return len(r.data) > 0
+        except Exception as e:
+            log.error(f"Error en mark_contact_scraped({contact_id}): {e}")
+            return False
+
+    def mark_contact_scrape_failed(self, contact_id: UUID, error: str) -> bool:
+        try:
+            r = (
+                self.client.table("contacts")
+                .update({
+                    "scrape_status": ContactScrapeStatus.FAILED.value,
+                    "scrape_error": error[:500],
+                })
+                .eq("id", str(contact_id))
+                .execute()
+            )
+            return len(r.data) > 0
+        except Exception as e:
+            log.error(f"Error en mark_contact_scrape_failed({contact_id}): {e}")
+            return False
+
+    def recover_stuck_contacts(self) -> int:
+        """Contactos que quedaron en 'scraping' más de 15 min → vuelven a needs_scraping."""
+        try:
+            from datetime import timezone
+            cutoff = (
+                datetime.now(timezone.utc) - timedelta(minutes=STUCK_LEAD_TIMEOUT_MINUTES)
+            ).isoformat()
+            r = (
+                self.client.table("contacts")
+                .update({"scrape_status": ContactScrapeStatus.NEEDS_SCRAPING.value})
+                .eq("scrape_status", ContactScrapeStatus.SCRAPING.value)
+                .lt("updated_at", cutoff)
+                .execute()
+            )
+            return len(r.data)
+        except Exception as e:
+            log.error(f"Error en recover_stuck_contacts: {e}")
+            return 0
+
+    # =========================================================================
+    # Email Queue: cola de envío por usuario (Opción A)
+    # =========================================================================
+
+    def populate_email_queue(self, user_id: str, config: HunterConfig, limit: int = 200) -> int:
+        """
+        Encola contactos del pool compartido para este usuario:
+        - Con email encontrado (scrape_status = done)
+        - Que no hayan sido enviados por este usuario aún
+        - Opcionalmente filtrados por nicho/ciudades del usuario (contact_segments o hunter_configs)
+        Devuelve la cantidad de nuevos ítems encolados.
+        """
+        try:
+            # Buscar segmentos del usuario (si tiene)
+            seg_r = (
+                self.client.table("contact_segments")
+                .select("industries, cities, has_domain")
+                .eq("user_id", user_id)
+                .eq("is_active", True)
+                .order("priority", desc=True)
+                .limit(10)
+                .execute()
+            )
+            segments = seg_r.data or []
+
+            # Construir query base: contactos con email listo
+            q = (
+                self.client.table("contacts")
+                .select("id")
+                .eq("scrape_status", ContactScrapeStatus.DONE.value)
+                .not_.is_("email", "null")
+                .not_.is_("domain", "null")
+            )
+
+            # Aplicar filtro de nicho desde config si no tiene segmentos
+            if not segments and config.nicho:
+                q = q.eq("industry", config.nicho)
+
+            contacts_r = q.limit(limit * 3).execute()  # buscar más para compensar exclusiones
+            all_contact_ids = [row["id"] for row in (contacts_r.data or [])]
+            if not all_contact_ids:
+                return 0
+
+            # Excluir los que ya están en la queue de este usuario
+            existing_r = (
+                self.client.table("email_queue")
+                .select("contact_id")
+                .eq("user_id", user_id)
+                .in_("contact_id", all_contact_ids)
+                .execute()
+            )
+            already_queued = {row["contact_id"] for row in (existing_r.data or [])}
+            new_ids = [cid for cid in all_contact_ids if cid not in already_queued][:limit]
+
+            if not new_ids:
+                return 0
+
+            from datetime import timezone
+            now = datetime.now(timezone.utc).isoformat()
+            rows = [
+                {
+                    "contact_id": cid,
+                    "user_id": user_id,
+                    "from_email": config.from_email,
+                    "status": EmailQueueStatus.PENDING.value,
+                    "queued_at": now,
+                }
+                for cid in new_ids
+            ]
+            self.client.table("email_queue").upsert(
+                rows,
+                on_conflict="contact_id,user_id",
+                ignore_duplicates=True,
+            ).execute()
+            return len(new_ids)
+        except Exception as e:
+            log.error(f"Error en populate_email_queue(user={user_id}): {e}")
+            return 0
+
+    def fetch_email_queue_for_user(self, user_id: str, limit: int = 10) -> List[EmailQueueItem]:
+        """Lee emails pendientes de un usuario desde email_queue, con datos del contacto."""
+        try:
+            r = (
+                self.client.table("email_queue")
+                .select("*, contacts(*)")
+                .eq("user_id", user_id)
+                .eq("status", EmailQueueStatus.PENDING.value)
+                .order("queued_at", desc=False)
+                .limit(limit)
+                .execute()
+            )
+            items = []
+            for row in (r.data or []):
+                contact_data = row.pop("contacts", None)
+                item = EmailQueueItem(**row)
+                if contact_data:
+                    item = item.model_copy(update={"contact": Contact(**contact_data)})
+                items.append(item)
+            return items
+        except Exception as e:
+            log.error(f"Error en fetch_email_queue_for_user(user={user_id}): {e}")
+            return []
+
+    def mark_queue_item_sending(self, queue_id: UUID) -> bool:
+        try:
+            r = (
+                self.client.table("email_queue")
+                .update({"status": EmailQueueStatus.SENDING.value})
+                .eq("id", str(queue_id))
+                .eq("status", EmailQueueStatus.PENDING.value)
+                .execute()
+            )
+            return len(r.data) > 0
+        except Exception as e:
+            log.error(f"Error en mark_queue_item_sending({queue_id}): {e}")
+            return False
+
+    def mark_queue_item_sent(self, queue_id: UUID, resend_id: Optional[str] = None) -> bool:
+        from datetime import timezone
+        payload = {
+            "status": EmailQueueStatus.SENT.value,
+            "sent_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if resend_id:
+            payload["resend_id"] = resend_id
+        try:
+            r = (
+                self.client.table("email_queue")
+                .update(payload)
+                .eq("id", str(queue_id))
+                .execute()
+            )
+            return len(r.data) > 0
+        except Exception as e:
+            log.error(f"Error en mark_queue_item_sent({queue_id}): {e}")
+            return False
+
+    def mark_queue_item_failed(self, queue_id: UUID, error: str, attempt_count: int = 1) -> bool:
+        try:
+            r = (
+                self.client.table("email_queue")
+                .update({
+                    "status": EmailQueueStatus.FAILED.value,
+                    "error_msg": error[:500],
+                    "attempt_count": attempt_count,
+                })
+                .eq("id", str(queue_id))
+                .execute()
+            )
+            return len(r.data) > 0
+        except Exception as e:
+            log.error(f"Error en mark_queue_item_failed({queue_id}): {e}")
+            return False
+
+    def register_wpp_followup(
+        self,
+        contact_id: str,
+        user_id: str,
+        phone: str,
+        company_name: str,
+        from_number: str,
+    ) -> None:
+        """
+        Inserta el WPP de seguimiento en whatsapp_outbox para que quede visible
+        en el Sender Bot como un mensaje enviado por el usuario.
+        """
+        try:
+            from datetime import timezone
+            self.client.table("whatsapp_outbox").upsert(
+                {
+                    "user_id": user_id,
+                    "source": "contacts",
+                    "source_id": contact_id,
+                    "nombre": company_name,
+                    "telefono": phone,
+                    "from_number": from_number,
+                    "status": "sent",
+                    "sent_at": datetime.now(timezone.utc).isoformat(),
+                    "origin": "wpp_followup_after_email",
+                },
+                on_conflict="source,source_id,user_id",
+                ignore_duplicates=True,
+            ).execute()
+        except Exception as e:
+            log.warning(f"No se pudo registrar WPP follow-up en outbox: {e}")
+
+    def insert_contact(
+        self,
+        domain: Optional[str],
+        phone: Optional[str] = None,
+        company_name: Optional[str] = None,
+        industry: Optional[str] = None,
+        city: Optional[str] = None,
+        country: str = "Argentina",
+        source: str = "finder",
+    ) -> Optional[str]:
+        """
+        Inserta un contacto en el pool compartido. Silencia duplicados (por domain).
+        Devuelve el id del contacto insertado o None.
+        """
+        try:
+            row: dict = {
+                "scrape_status": (
+                    ContactScrapeStatus.NEEDS_SCRAPING.value
+                    if domain else ContactScrapeStatus.NO_EMAIL.value
+                ),
+                "source": source,
+                "country": country,
+            }
+            if domain:
+                row["domain"] = domain.strip().lower()
+            if phone:
+                row["phone"] = phone
+            if company_name:
+                row["company_name"] = company_name
+            if industry:
+                row["industry"] = industry
+            if city:
+                row["city"] = city
+
+            r = self.client.table("contacts").insert(row).execute()
+            if r.data and len(r.data) > 0:
+                return r.data[0].get("id")
+            return None
+        except Exception as e:
+            if "duplicate" not in str(e).lower() and "unique" not in str(e).lower():
+                log.error(f"Error en insert_contact(domain={domain}): {e}")
+            return None
