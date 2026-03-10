@@ -92,6 +92,7 @@ El worker correrá indefinidamente, procesando:
 | `FROM_EMAIL` | Sí | Email remitente (ej: `manuel@getbotlode.com`, dominio verificado en Resend) |
 | `FROM_NAME` | No | Nombre del remitente (ej: `Manuel de Botlode`) |
 | `CALENDAR_LINK` | No | Link para agendar demos |
+| `METALWAILERS_EMAIL_IMAGE_URL` | No | URL pública del flyer para emails Metalwailers (si no se setea, el correo se envía solo texto). Ver sección "Metalwailers" más abajo. |
 
 ## Agregar Dominios para Scraping
 
@@ -232,3 +233,29 @@ Railway: ~$5-10/mes (500 horas gratis, luego por uso)
 **Logs no aparecen en Botslode:**
 - Supabase → Database → Replication
 - Activar Realtime para `hunter_logs` y `leads`
+
+---
+
+## Metalwailers: imagen en el email y entregabilidad
+
+### Imagen en el correo Metalwailers
+
+El flyer ya está configurado por defecto con la URL pública en **Supabase Storage** (bucket `metalwailersmail`). En **Railway** no hace falta configurar nada; los correos incluyen la imagen. Para usar otra imagen, definí `METALWAILERS_EMAIL_IMAGE_URL` en Railway.
+
+
+
+### Cómo intentar que llegue a Principal y no a Promociones (dominio nuevo)
+
+Con un **dominio nuevo** (`metalwailersinfo.com`) Gmail suele clasificar el primer outreach como **Promociones**. No hay garantía, pero podés mejorar las chances:
+
+1. **DNS (Resend):** En Resend, verificá el dominio `metalwailersinfo.com` y asegurate de tener **SPF, DKIM y DMARC** bien configurados. Resend te da los registros; eso mejora la reputación del remitente.
+
+2. **Warmup:** Enviar poco al principio (p. ej. 10–20 correos/día), aumentar de a poco. Algunos servicios hacen “warmup” automático (inbox reach, etc.); no es obligatorio pero ayuda.
+
+3. **Asunto y contenido más “conversacionales”:**
+   - Evitá asuntos muy de marketing (“Potenciemos tu negocio juntos” suena a promoción). Podés probar algo más neutro, por ejemplo: “Consulta – [nombre empresa]” o “¿Te sirve si te paso info?” (y que el cuerpo sea breve y personal).
+   - En el cuerpo: una línea corta, pregunta o CTA a **responder** (ej. “¿Te mando más datos por mail?”) suele ayudar a que Gmail lo vea como conversación.
+
+4. **Tiempo:** A medida que el dominio envíe más y reciba respuestas/opens, Gmail puede ir moviendo correos a Principal. No es inmediato; con dominio nuevo puede llevar semanas.
+
+En resumen: **imagen** → ya por defecto (Supabase); para otra imagen usá `METALWAILERS_EMAIL_IMAGE_URL`. **Promociones** → DNS correcto, warmup, asunto/cuerpo más personales y paciencia con el dominio nuevo.

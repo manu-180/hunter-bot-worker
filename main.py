@@ -259,15 +259,6 @@ class LeadSniperWorker:
                 log.warning(f"[{user_id[:8]}] Sin configuración de Resend, saltando")
                 continue
 
-            # Límite warm-up por usuario (dominios warmup-*)
-            sent_count = self.repo.get_sent_count(warmup_only=True)
-            if sent_count >= BotConfig.MAX_TOTAL_EMAILS_SENT:
-                log.info(
-                    f"[{user_id[:8]}] Límite warm-up ({sent_count}/{BotConfig.MAX_TOTAL_EMAILS_SENT}), "
-                    "saltando envíos."
-                )
-                continue
-
             # Encolar nuevos contactos del pool para este usuario (idempotente)
             new_queued = self.repo.populate_email_queue(
                 user_id=user_id,

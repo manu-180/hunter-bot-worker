@@ -45,6 +45,11 @@ class MailerService:
     # Default email subject (Railway deploy force: 2026-02-05)
     DEFAULT_SUBJECT = "Tu web está perdiendo clientes - Elevá su nivel ahora"
     _METALWAILERS_DOMAIN = "metalwailersinfo.com"
+    # Flyer Metalwailers en Supabase Storage (fallback si no hay env ni archivo local)
+    _METALWAILERS_DEFAULT_IMAGE_URL = (
+        "https://gfvslxtqmjrelrugrcfp.supabase.co/storage/v1/object/public/metalwailersmail/"
+        "WhatsApp%20Image%202026-03-08%20at%201.35.07%20AM.jpeg"
+    )
 
     def __init__(
         self,
@@ -180,11 +185,9 @@ class MailerService:
             except Exception as exc:
                 log.warning(f"No se pudo leer imagen de Metalwailers en {path}: {exc}")
 
-        log.warning(
-            "Metalwailers: no se encontró imagen local ni URL. "
-            "Definí METALWAILERS_EMAIL_IMAGE_URL para asegurar render en todos los clientes."
-        )
-        return ""
+        # Fallback: URL pública en Supabase Storage (funciona en Railway sin env)
+        log.info("Metalwailers: usando imagen por defecto (Supabase Storage)")
+        return self._METALWAILERS_DEFAULT_IMAGE_URL
 
     def _render_metalwailers_image_email(self, sender_name: str, from_email: str) -> str:
         img_src = self._metalwailers_image_src
