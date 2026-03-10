@@ -189,38 +189,189 @@ class MailerService:
         log.info("Metalwailers: usando imagen por defecto (Supabase Storage)")
         return self._METALWAILERS_DEFAULT_IMAGE_URL
 
+    _METALWAILERS_WA_LINK = "https://wa.me/5491162913437"
+    _METALWAILERS_WEB_LINK = "https://www.metalwailers.com/"
+
     def _render_metalwailers_image_email(self, sender_name: str, from_email: str) -> str:
         img_src = self._metalwailers_image_src
+        wa_link = self._METALWAILERS_WA_LINK
+        web_link = self._METALWAILERS_WEB_LINK
+
         if not img_src:
-            # Fallback robusto si falta imagen.
-            return f"""<!DOCTYPE html>
-<html lang="es"><body style="margin:0;padding:24px;font-family:Arial,sans-serif;background:#f6f6f6;">
-  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:680px;margin:0 auto;background:#ffffff;border:1px solid #e8e8e8;">
-    <tr><td style="padding:24px;">
-      <h2 style="margin:0 0 8px 0;color:#111;">{html_lib.escape(sender_name)}</h2>
-      <p style="margin:0 0 12px 0;color:#222;">Te comparto información de nuestros servicios metalúrgicos.</p>
-      <p style="margin:0;color:#555;font-size:13px;">{html_lib.escape(from_email)}</p>
-    </td></tr>
-  </table>
-</body></html>"""
+            img_block = ""
+        else:
+            img_block = f"""
+          <!-- Flyer -->
+          <tr>
+            <td style="padding:0;line-height:0;font-size:0;">
+              <img src="{img_src}"
+                   alt="MetalWailers &#8212; Soluciones metalúrgicas a medida"
+                   width="600"
+                   style="display:block;width:100%;max-width:600px;height:auto;
+                          border:0;outline:none;text-decoration:none;" />
+            </td>
+          </tr>"""
 
         return f"""<!DOCTYPE html>
-<html lang="es">
-<body style="margin:0;padding:0;background:#f3f3f3;">
-  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#f3f3f3;">
+<html lang="es" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>MetalWailers</title>
+  <!--[if mso]>
+  <noscript><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript>
+  <![endif]-->
+  <style>
+    body, table, td, a {{ -webkit-text-size-adjust:100%; -ms-text-size-adjust:100%; }}
+    table, td {{ mso-table-lspace:0pt; mso-table-rspace:0pt; border-collapse:collapse; }}
+    img {{ -ms-interpolation-mode:bicubic; }}
+    @media only screen and (max-width:620px) {{
+      .email-wrapper {{ width:100% !important; }}
+      .cta-table {{ width:100% !important; }}
+      .cta-cell {{ display:block !important; width:100% !important; padding:6px 24px !important; }}
+      .cta-btn {{ width:100% !important; display:block !important; box-sizing:border-box !important; }}
+      .footer-divider {{ display:none !important; }}
+    }}
+  </style>
+</head>
+<body style="margin:0;padding:0;background-color:#1a1a1a;-webkit-font-smoothing:antialiased;">
+
+  <!-- Background wrapper -->
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0"
+         style="background-color:#1a1a1a;">
     <tr>
-      <td align="center" style="padding:20px 10px;">
-        <table role="presentation" width="680" cellspacing="0" cellpadding="0" style="width:100%;max-width:680px;background:#ffffff;border:1px solid #e7e7e7;">
+      <td align="center" style="padding:28px 12px 36px 12px;">
+
+        <!-- Email card -->
+        <table role="presentation" class="email-wrapper" width="600" cellspacing="0" cellpadding="0"
+               style="width:100%;max-width:600px;background-color:#111111;
+                      border-radius:4px;overflow:hidden;
+                      box-shadow:0 8px 40px rgba(0,0,0,0.6);">
+{img_block}
+
+          <!-- ─── SEPARATOR ─── -->
           <tr>
-            <td style="padding:0;">
-              <img src="{img_src}" alt="Metalwailers - Soluciones metalúrgicas a medida"
-                   style="display:block;width:100%;height:auto;border:0;outline:none;text-decoration:none;" />
+            <td style="height:1px;background:linear-gradient(90deg,#1a1a1a 0%,#888 50%,#1a1a1a 100%);
+                       font-size:0;line-height:0;">&nbsp;</td>
+          </tr>
+
+          <!-- ─── TAGLINE ─── -->
+          <tr>
+            <td align="center" style="padding:28px 32px 4px 32px;">
+              <p style="margin:0;font-family:Arial,Helvetica,sans-serif;
+                        font-size:13px;font-weight:700;letter-spacing:3px;
+                        text-transform:uppercase;color:#9a9a9a;">
+                Cada pieza, fabricada con precisión
+              </p>
             </td>
           </tr>
+
+          <!-- ─── CTA BUTTONS ─── -->
+          <tr>
+            <td align="center" style="padding:20px 32px 32px 32px;">
+              <table role="presentation" class="cta-table" cellspacing="0" cellpadding="0">
+                <tr>
+                  <!-- WhatsApp button -->
+                  <td class="cta-cell" align="center" style="padding:0 8px 0 0;">
+                    <a href="{wa_link}"
+                       class="cta-btn"
+                       target="_blank"
+                       style="display:inline-block;
+                              background-color:#25D366;
+                              color:#ffffff;
+                              font-family:Arial,Helvetica,sans-serif;
+                              font-size:14px;font-weight:700;
+                              letter-spacing:0.3px;
+                              text-decoration:none;
+                              padding:14px 28px;
+                              border-radius:3px;
+                              mso-padding-alt:0;
+                              text-align:center;">
+                      <!--[if mso]><i style="mso-font-width:100%;letter-spacing:14px;mso-text-raise:20pt">&nbsp;</i><![endif]-->
+                      &#128172;&nbsp; Escribinos al WhatsApp
+                    </a>
+                  </td>
+
+                  <!-- Website button -->
+                  <td class="cta-cell" align="center" style="padding:0 0 0 8px;">
+                    <a href="{web_link}"
+                       class="cta-btn"
+                       target="_blank"
+                       style="display:inline-block;
+                              background-color:#2a2a2a;
+                              color:#d0d0d0;
+                              font-family:Arial,Helvetica,sans-serif;
+                              font-size:14px;font-weight:700;
+                              letter-spacing:0.3px;
+                              text-decoration:none;
+                              padding:14px 28px;
+                              border-radius:3px;
+                              border:1px solid #444;
+                              mso-padding-alt:0;
+                              text-align:center;">
+                      <!--[if mso]><i style="mso-font-width:100%;letter-spacing:14px;mso-text-raise:20pt">&nbsp;</i><![endif]-->
+                      &#127760;&nbsp; Ver nuestros trabajos
+                    </a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- ─── FOOTER ─── -->
+          <tr>
+            <td style="background-color:#0d0d0d;padding:20px 32px;border-top:1px solid #2a2a2a;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                <tr>
+                  <td align="center">
+                    <!-- Wordmark -->
+                    <p style="margin:0 0 6px 0;font-family:Arial,Helvetica,sans-serif;
+                               font-size:16px;font-weight:800;letter-spacing:2px;
+                               text-transform:uppercase;color:#c8c8c8;">
+                      METALWAILERS
+                    </p>
+                    <!-- Descriptor -->
+                    <p style="margin:0 0 14px 0;font-family:Arial,Helvetica,sans-serif;
+                               font-size:10px;letter-spacing:2.5px;text-transform:uppercase;
+                               color:#555;">
+                      Soluciones metalúrgicas a medida &bull; Zona Norte, Buenos Aires
+                    </p>
+                    <!-- Divider -->
+                    <table role="presentation" cellspacing="0" cellpadding="0" style="margin:0 auto 14px auto;">
+                      <tr>
+                        <td style="width:40px;height:1px;background:#333;font-size:0;line-height:0;">&nbsp;</td>
+                        <td style="width:8px;">&nbsp;</td>
+                        <td style="width:40px;height:1px;background:#333;font-size:0;line-height:0;">&nbsp;</td>
+                      </tr>
+                    </table>
+                    <!-- Contact line -->
+                    <p style="margin:0;font-family:Arial,Helvetica,sans-serif;
+                               font-size:12px;color:#555;">
+                      <a href="{wa_link}" target="_blank"
+                         style="color:#555;text-decoration:none;">
+                        +54 9 11 6291&#8209;3437
+                      </a>
+                      <span class="footer-divider" style="padding:0 8px;color:#333;">|</span>
+                      <a href="{web_link}" target="_blank"
+                         style="color:#555;text-decoration:none;">
+                        metalwailers.com
+                      </a>
+                    </p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
         </table>
+        <!-- /Email card -->
+
       </td>
     </tr>
   </table>
+  <!-- /Background wrapper -->
+
 </body>
 </html>"""
 

@@ -36,9 +36,9 @@ class BotConfig:
     SCRAPE_BATCH_SIZE: int = _int("HUNTER_SCRAPE_BATCH_SIZE", 5)
     EMAIL_BATCH_SIZE: int = _int("HUNTER_EMAIL_BATCH_SIZE", 1)  # 1 por ciclo; el cooldown limita el total
     SCRAPE_TIMEOUT: int = _int("HUNTER_SCRAPE_TIMEOUT", 20)
-    # Cooldown entre emails: 10 min (como Sender Bot). ~6/hora × 11h = ~66 emails/día máx.
-    EMAIL_MIN_DELAY: int = _int("HUNTER_EMAIL_MIN_DELAY", 600)
-    EMAIL_MAX_DELAY: int = _int("HUNTER_EMAIL_MAX_DELAY", 600)
+    # Cooldown entre emails: 3 min para todos los usuarios. ~20/hora × 11h = ~220 emails/día máx.
+    EMAIL_MIN_DELAY: int = _int("HUNTER_EMAIL_MIN_DELAY", 180)
+    EMAIL_MAX_DELAY: int = _int("HUNTER_EMAIL_MAX_DELAY", 180)
     IDLE_SLEEP_SECONDS: int = _int("HUNTER_IDLE_SLEEP", 10)
     HEARTBEAT_INTERVAL: int = _int("HUNTER_HEARTBEAT_INTERVAL", 60)
 
