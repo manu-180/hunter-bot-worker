@@ -104,7 +104,9 @@ class HunterConfig(BaseModel):
     
     # Bot control
     bot_enabled: bool = False
-    nicho: str = "inmobiliarias"
+    # Si es None (no configurado en DB), populate_email_queue usa todos los contactos del pool.
+    # Si tiene valor, filtra contactos por industry. NO usar default "inmobiliarias" para no filtrar sin querer.
+    nicho: Optional[str] = None
     ciudades: list[str] = Field(default_factory=lambda: ["Buenos Aires", "Córdoba", "Rosario"])
     pais: str = "Argentina"
     
