@@ -693,17 +693,22 @@ class SupabaseRepository:
         Devuelve la cantidad de nuevos ítems encolados.
         """
         try:
-            # Buscar segmentos del usuario (si tiene)
-            seg_r = (
-                self.client.table("contact_segments")
-                .select("industries, cities, has_domain")
-                .eq("user_id", user_id)
-                .eq("is_active", True)
-                .order("priority", desc=True)
-                .limit(10)
-                .execute()
-            )
-            segments = seg_r.data or []
+            # Buscar segmentos del usuario (si tiene).
+            # Defensive: si la tabla no existe en el proyecto, se ignora y se sigue sin filtro.
+            segments = []
+            try:
+                seg_r = (
+                    self.client.table("contact_segments")
+                    .select("industries, cities, has_domain")
+                    .eq("user_id", user_id)
+                    .eq("is_active", True)
+                    .order("priority", desc=True)
+                    .limit(10)
+                    .execute()
+                )
+                segments = seg_r.data or []
+            except Exception:
+                segments = []  # tabla no existe o error → sin filtro por segmento
 
             # Construir query base: contactos con email listo
             q = (
