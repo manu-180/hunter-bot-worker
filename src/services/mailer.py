@@ -51,6 +51,14 @@ class MailerService:
         "WhatsApp%20Image%202026-03-08%20at%201.35.07%20AM.jpeg"
     )
 
+    # Botlode: email con flyer BOTRIVE (mismo estilo que Metalwailers)
+    _BOTLODE_DOMAIN = "getbotlode.com"
+    _BOTRIVE_IMAGE_URL = (
+        "https://gfvslxtqmjrelrugrcfp.supabase.co/storage/v1/object/public/metalwailersmail/botrivemail.jpeg"
+    )
+    _BOTLODE_WA_LINK = "https://wa.me/5491134272488"
+    _BOTRIVE_WEB_LINK = "https://www.botrive.com"
+
     def __init__(
         self,
         min_delay: int = 10,
@@ -151,6 +159,11 @@ class MailerService:
     def _is_metalwailers_sender(cls, from_email: str) -> bool:
         email = (from_email or "").strip().lower()
         return email.endswith(f"@{cls._METALWAILERS_DOMAIN}")
+
+    @classmethod
+    def _is_botlode_sender(cls, from_email: str) -> bool:
+        email = (from_email or "").strip().lower()
+        return email.endswith(f"@{cls._BOTLODE_DOMAIN}")
 
     def _resolve_metalwailers_image_src(self) -> str:
         """
@@ -375,6 +388,184 @@ class MailerService:
 </body>
 </html>"""
 
+    def _render_botlode_image_email(self, sender_name: str, from_email: str) -> str:
+        """Email tipo Metalwailers para Botlode: flyer BOTRIVE, WhatsApp y web."""
+        img_src = self._BOTRIVE_IMAGE_URL
+        wa_link = self._BOTLODE_WA_LINK
+        web_link = self._BOTRIVE_WEB_LINK
+
+        if not img_src:
+            img_block = ""
+        else:
+            img_block = f"""
+          <!-- Flyer BOTRIVE -->
+          <tr>
+            <td style="padding:0;line-height:0;font-size:0;">
+              <img src="{img_src}"
+                   alt="BOTRIVE &#8212; Tu chatbot est&#225;ndar de oro"
+                   width="600"
+                   style="display:block;width:100%;max-width:600px;height:auto;
+                          border:0;outline:none;text-decoration:none;" />
+            </td>
+          </tr>"""
+
+        return f"""<!DOCTYPE html>
+<html lang="es" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <title>BOTRIVE</title>
+  <!--[if mso]>
+  <noscript><xml><o:OfficeDocumentSettings><o:PixelsPerInch>96</o:PixelsPerInch></o:OfficeDocumentSettings></xml></noscript>
+  <![endif]-->
+  <style>
+    body, table, td, a {{ -webkit-text-size-adjust:100%; -ms-text-size-adjust:100%; }}
+    table, td {{ mso-table-lspace:0pt; mso-table-rspace:0pt; border-collapse:collapse; }}
+    img {{ -ms-interpolation-mode:bicubic; }}
+    @media only screen and (max-width:620px) {{
+      .email-wrapper {{ width:100% !important; }}
+      .cta-table {{ width:100% !important; }}
+      .cta-cell {{ display:block !important; width:100% !important; padding:6px 24px !important; }}
+      .cta-btn {{ width:100% !important; display:block !important; box-sizing:border-box !important; }}
+      .footer-divider {{ display:none !important; }}
+    }}
+  </style>
+</head>
+<body style="margin:0;padding:0;background-color:#1a1a1a;-webkit-font-smoothing:antialiased;">
+
+  <!-- Background wrapper -->
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0"
+         style="background-color:#1a1a1a;">
+    <tr>
+      <td align="center" style="padding:28px 12px 36px 12px;">
+
+        <!-- Email card -->
+        <table role="presentation" class="email-wrapper" width="600" cellspacing="0" cellpadding="0"
+               style="width:100%;max-width:600px;background-color:#111111;
+                      border-radius:4px;overflow:hidden;
+                      box-shadow:0 8px 40px rgba(0,0,0,0.6);">
+{img_block}
+
+          <!-- ─── SEPARATOR ─── -->
+          <tr>
+            <td style="height:1px;background:linear-gradient(90deg,#1a1a1a 0%,#888 50%,#1a1a1a 100%);
+                       font-size:0;line-height:0;">&nbsp;</td>
+          </tr>
+
+          <!-- ─── TAGLINE ─── -->
+          <tr>
+            <td align="center" style="padding:28px 32px 4px 32px;">
+              <p style="margin:0;font-family:Arial,Helvetica,sans-serif;
+                        font-size:13px;font-weight:700;letter-spacing:3px;
+                        text-transform:uppercase;color:#9a9a9a;">
+                Tu asistente virtual listo para trabajar
+              </p>
+            </td>
+          </tr>
+
+          <!-- ─── CTA BUTTONS ─── -->
+          <tr>
+            <td align="center" style="padding:20px 32px 32px 32px;">
+              <table role="presentation" class="cta-table" cellspacing="0" cellpadding="0">
+                <tr>
+                  <!-- WhatsApp button -->
+                  <td class="cta-cell" align="center" style="padding:0 8px 0 0;">
+                    <a href="{wa_link}"
+                       class="cta-btn"
+                       target="_blank"
+                       style="display:inline-block;
+                              background-color:#25D366;
+                              color:#ffffff;
+                              font-family:Arial,Helvetica,sans-serif;
+                              font-size:14px;font-weight:700;
+                              letter-spacing:0.3px;
+                              text-decoration:none;
+                              padding:14px 28px;
+                              border-radius:3px;
+                              mso-padding-alt:0;
+                              text-align:center;">
+                      &#128172;&nbsp; Contactame por WhatsApp
+                    </a>
+                  </td>
+
+                  <!-- Website button -->
+                  <td class="cta-cell" align="center" style="padding:0 0 0 8px;">
+                    <a href="{web_link}"
+                       class="cta-btn"
+                       target="_blank"
+                       style="display:inline-block;
+                              background-color:#2a2a2a;
+                              color:#d0d0d0;
+                              font-family:Arial,Helvetica,sans-serif;
+                              font-size:14px;font-weight:700;
+                              letter-spacing:0.3px;
+                              text-decoration:none;
+                              padding:14px 28px;
+                              border-radius:3px;
+                              border:1px solid #444;
+                              mso-padding-alt:0;
+                              text-align:center;">
+                      &#127760;&nbsp; Ver la web
+                    </a>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+          <!-- ─── FOOTER ─── -->
+          <tr>
+            <td style="background-color:#0d0d0d;padding:20px 32px;border-top:1px solid #2a2a2a;">
+              <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
+                <tr>
+                  <td align="center">
+                    <p style="margin:0 0 6px 0;font-family:Arial,Helvetica,sans-serif;
+                               font-size:16px;font-weight:800;letter-spacing:2px;
+                               text-transform:uppercase;color:#c8c8c8;">
+                      BOTRIVE
+                    </p>
+                    <p style="margin:0 0 14px 0;font-family:Arial,Helvetica,sans-serif;
+                               font-size:10px;letter-spacing:2.5px;text-transform:uppercase;
+                               color:#555;">
+                      Chatbot con IA &bull; 6 modos &bull; Alertas e historial
+                    </p>
+                    <table role="presentation" cellspacing="0" cellpadding="0" style="margin:0 auto 14px auto;">
+                      <tr>
+                        <td style="width:40px;height:1px;background:#333;font-size:0;line-height:0;">&nbsp;</td>
+                        <td style="width:8px;">&nbsp;</td>
+                        <td style="width:40px;height:1px;background:#333;font-size:0;line-height:0;">&nbsp;</td>
+                      </tr>
+                    </table>
+                    <p style="margin:0;font-family:Arial,Helvetica,sans-serif;
+                               font-size:12px;color:#555;">
+                      <a href="{wa_link}" target="_blank"
+                         style="color:#555;text-decoration:none;">
+                        11 3427&#8209;2488
+                      </a>
+                      <span class="footer-divider" style="padding:0 8px;color:#333;">|</span>
+                      <a href="{web_link}" target="_blank"
+                         style="color:#555;text-decoration:none;">
+                        botrive.com
+                      </a>
+                    </p>
+                  </td>
+                </tr>
+              </table>
+            </td>
+          </tr>
+
+        </table>
+        <!-- /Email card -->
+
+      </td>
+    </tr>
+  </table>
+  <!-- /Background wrapper -->
+
+</body>
+</html>"""
+
     # v8: placeholders del template para renderizado eficiente con loop
     _TEMPLATE_PLACEHOLDERS = (
         "{{company_name}}", "{{domain}}", "{{email}}",
@@ -419,6 +610,10 @@ class MailerService:
         # Template especial para Metalwailers: flyer de imagen completa.
         if self._is_metalwailers_sender(from_email):
             return self._render_metalwailers_image_email(sender_name, from_email)
+
+        # Template especial para Botlode: flyer BOTRIVE, WhatsApp y web.
+        if self._is_botlode_sender(from_email):
+            return self._render_botlode_image_email(sender_name, from_email)
         
         # v8: dict mapping para renderizado eficiente
         # NOTE: calendar_link usa quote=False porque va en href y & no debe escaparse

@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS hunter_configs (
     
     -- Configuración adicional
     calendar_link TEXT,
-    email_subject TEXT DEFAULT 'Potenciemos tu negocio juntos',
+    email_subject TEXT DEFAULT 'Dejá de pagar de más. Cotizá con nosotros hoy, mejores precios Zona Norte.',
     
     -- Estado
     is_active BOOLEAN DEFAULT false,
@@ -51,6 +51,10 @@ CREATE INDEX IF NOT EXISTS idx_hunter_configs_user ON hunter_configs(user_id);
 -- RLS (Row Level Security) para que cada usuario solo vea su config
 ALTER TABLE hunter_configs ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "Users can view own config" ON hunter_configs;
+DROP POLICY IF EXISTS "Users can insert own config" ON hunter_configs;
+DROP POLICY IF EXISTS "Users can update own config" ON hunter_configs;
+DROP POLICY IF EXISTS "Users can delete own config" ON hunter_configs;
 CREATE POLICY "Users can view own config" ON hunter_configs
     FOR SELECT USING (auth.uid() = user_id);
 
