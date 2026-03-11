@@ -252,11 +252,12 @@ class LeadSniperWorker:
 
         for config in active_configs:
             user_id = str(config.user_id)
+            tag = config.from_name or user_id[:8]
 
             if not config.bot_enabled:
                 continue
             if not config.is_configured:
-                log.warning(f"[{user_id[:8]}] Sin configuración de Resend, saltando")
+                log.warning(f"[{tag}] Sin configuración de Resend, saltando")
                 continue
 
             # Encolar nuevos contactos del pool para este usuario (idempotente)
@@ -266,7 +267,9 @@ class LeadSniperWorker:
                 limit=self.email_batch_size * 5,
             )
             if new_queued:
-                log.info(f"[{user_id[:8]}] {new_queued} nuevos contactos encolados para envío")
+                log.info(f"[{tag}] {new_queued} nuevos contactos encolados para envío")
+            else:
+                log.info(f"[{tag}] 0 nuevos contactos encolados (nicho={config.nicho!r})")
 
             # Leer cola de envío de este usuario
             queue_items = self.repo.fetch_email_queue_for_user(
@@ -274,14 +277,15 @@ class LeadSniperWorker:
                 limit=self.email_batch_size,
             )
             if not queue_items:
+                log.info(f"[{tag}] Sin emails pendientes en cola, continuando")
                 continue
 
-            log.email(f"[{user_id[:8]}] Enviando {len(queue_items)} emails desde {config.from_email}")
+            log.email(f"[{tag}] Enviando {len(queue_items)} emails desde {config.from_email}")
 
             for item in queue_items:
                 contact = item.contact
                 if not contact or not contact.email:
-                    log.warning(f"[{user_id[:8]}] item {item.id} sin contacto/email, saltando")
+                    log.warning(f"[{tag}] item {item.id} sin contacto/email, saltando")
                     continue
 
                 # Bloqueo optimista
