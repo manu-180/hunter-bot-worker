@@ -901,8 +901,13 @@ class MailerService:
         # Delegate to unified _send_single with per-user API key and config
         result = await self._send_single(lead, api_key=config.resend_api_key, config=config)
         
-        # v8: solo delay si el envío fue exitoso (no desperdiciar tiempo en fallos)
+        # v8: solo delay si el envío fue exitoso. Cooldown por usuario (ej. Metalwailers 10 min, Botlode 5 min).
         if result.success:
-            await self._human_delay()
+            cooldown = getattr(config, "email_cooldown_seconds", None)
+            if cooldown is not None and cooldown >= 0:
+                log.info(f"Cooldown: esperando {cooldown // 60} min antes del próximo email...")
+                await asyncio.sleep(cooldown)
+            else:
+                await self._human_delay()
         
         return result

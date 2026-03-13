@@ -719,27 +719,47 @@ class SupabaseRepository:
                 .not_.is_("domain", "null")
             )
 
-            # Filtro por segmentos (industries, cities, has_domain) o por config.nicho
+            # Filtro por segmentos (industries, cities, has_domain) o por config.nicho.
+            # Si hay segmentos y el filtro deja 0 contactos, se hace fallback sin segmento
+            # para que el usuario no quede en 0 pendientes (p. ej. BotLode vs Metal Wailers).
+            used_segment_filter = False
             if segments:
-                # Usar el segmento de mayor prioridad para filtrar
                 seg = segments[0]
                 industries = seg.get("industries")
                 cities = seg.get("cities")
                 has_domain = seg.get("has_domain")
                 if industries:
                     q = q.in_("industry", industries)
+                    used_segment_filter = True
                 if cities:
                     q = q.in_("city", cities)
+                    used_segment_filter = True
                 if has_domain is not None:
                     if has_domain:
                         q = q.not_.is_("domain", "null")
                     else:
                         q = q.is_("domain", "null")
+                    used_segment_filter = True
             elif config.nicho:
                 q = q.eq("industry", config.nicho)
 
             contacts_r = q.limit(limit * 3).execute()  # buscar más para compensar exclusiones
             all_contact_ids = [row["id"] for row in (contacts_r.data or [])]
+
+            # Fallback: si teníamos filtro por segmento y no hay candidatos, reintentar sin segmento
+            if not all_contact_ids and used_segment_filter:
+                q_fallback = (
+                    self.client.table("contacts")
+                    .select("id")
+                    .eq("scrape_status", ContactScrapeStatus.DONE.value)
+                    .not_.is_("email", "null")
+                    .not_.is_("domain", "null")
+                )
+                if config.nicho:
+                    q_fallback = q_fallback.eq("industry", config.nicho)
+                contacts_r = q_fallback.limit(limit * 3).execute()
+                all_contact_ids = [row["id"] for row in (contacts_r.data or [])]
+
             if not all_contact_ids:
                 return 0
 

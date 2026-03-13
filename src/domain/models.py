@@ -101,7 +101,9 @@ class HunterConfig(BaseModel):
     calendar_link: Optional[str] = None
     email_subject: Optional[str] = None
     is_active: bool = False
-    
+    # Cooldown entre emails (segundos). NULL = default del worker (300). 600 = 10 min para Metalwailers.
+    email_cooldown_seconds: Optional[int] = None
+
     # Bot control
     bot_enabled: bool = False
     # Si es None (no configurado en DB), populate_email_queue usa todos los contactos del pool.
