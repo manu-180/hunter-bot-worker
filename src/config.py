@@ -28,9 +28,9 @@ class BotConfig:
     """Centralized bot configuration with env-var overrides."""
 
     # ── Business hours (Argentina time) ──────────────────────────────────
-    # Igual que Sender Bot: 8:00 a 19:00. Solo envía emails en este horario.
+    # 8:00 a 20:00 (no más tarde). Igual que Sender Bot.
     BUSINESS_HOURS_START: int = _int("HUNTER_BUSINESS_HOURS_START", 8)
-    BUSINESS_HOURS_END: int = _int("HUNTER_BUSINESS_HOURS_END", 19)
+    BUSINESS_HOURS_END: int = _int("HUNTER_BUSINESS_HOURS_END", 20)
 
     # ── LeadSniper Worker ────────────────────────────────────────────────
     SCRAPE_BATCH_SIZE: int = _int("HUNTER_SCRAPE_BATCH_SIZE", 5)
