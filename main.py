@@ -35,6 +35,7 @@ from src.utils.timezone import is_business_hours, format_argentina_time
 # Centralized config (overrideable via env vars)
 BUSINESS_HOURS_START = BotConfig.BUSINESS_HOURS_START
 BUSINESS_HOURS_END = BotConfig.BUSINESS_HOURS_END
+IGNORE_BUSINESS_HOURS = BotConfig.IGNORE_BUSINESS_HOURS
 PAUSE_CHECK_INTERVAL = BotConfig.PAUSE_CHECK_INTERVAL
 
 
@@ -235,8 +236,8 @@ class LeadSniperWorker:
 
         Respeta horario laboral (Argentina) y límite warm-up.
         """
-        # 🕐 VERIFICAR HORARIO LABORAL (DST-aware)
-        if not is_business_hours(BUSINESS_HOURS_START, BUSINESS_HOURS_END):
+        # 🕐 VERIFICAR HORARIO LABORAL (DST-aware), salvo override para pruebas 24/7
+        if not IGNORE_BUSINESS_HOURS and not is_business_hours(BUSINESS_HOURS_START, BUSINESS_HOURS_END):
             log.warning(
                 f"⏸️  FUERA DE HORARIO LABORAL (Argentina: {format_argentina_time()}). "
                 f"Pausando envío de emails hasta las {BUSINESS_HOURS_START}:00 AM..."
@@ -441,9 +442,14 @@ class LeadSniperWorker:
                 if work_done == 0:
                     cycles_without_work += 1
                     if cycles_without_work == 1:
-                        if not is_business_hours(BUSINESS_HOURS_START, BUSINESS_HOURS_END):
+                        if not IGNORE_BUSINESS_HOURS and not is_business_hours(BUSINESS_HOURS_START, BUSINESS_HOURS_END):
                             log.info(f"⏸️  Emails pausados (fuera de horario: {format_argentina_time()}). "
                                      f"Scraping sigue activo 24/7.")
+                        elif IGNORE_BUSINESS_HOURS:
+                            log.info(
+                                f"⏩ Horario laboral ignorado (HUNTER_IGNORE_BUSINESS_HOURS=true). "
+                                f"Sin trabajo pendiente, esperando {self.idle_sleep_seconds}s..."
+                            )
                         else:
                             log.info(f"Sin trabajo pendiente, esperando {self.idle_sleep_seconds}s...")
                     await asyncio.sleep(self.idle_sleep_seconds)

@@ -24,6 +24,13 @@ def _float(key: str, default: float) -> float:
     return float(os.getenv(key, str(default)))
 
 
+def _bool(key: str, default: bool = False) -> bool:
+    val = (os.getenv(key, "") or "").strip().lower()
+    if not val:
+        return default
+    return val in ("1", "true", "yes", "on")
+
+
 class BotConfig:
     """Centralized bot configuration with env-var overrides."""
 
@@ -31,6 +38,8 @@ class BotConfig:
     # 8:00 a 20:00 (no más tarde). Igual que Sender Bot.
     BUSINESS_HOURS_START: int = _int("HUNTER_BUSINESS_HOURS_START", 8)
     BUSINESS_HOURS_END: int = _int("HUNTER_BUSINESS_HOURS_END", 20)
+    # Si True, ignora la ventana horaria y permite envío 24/7.
+    IGNORE_BUSINESS_HOURS: bool = _bool("HUNTER_IGNORE_BUSINESS_HOURS", False)
 
     # ── LeadSniper Worker ────────────────────────────────────────────────
     SCRAPE_BATCH_SIZE: int = _int("HUNTER_SCRAPE_BATCH_SIZE", 5)
