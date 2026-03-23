@@ -447,6 +447,24 @@ def _is_assistify_nicho(nicho: str, type_raw: Optional[str] = None,
             return True
     return False
 
+
+METAL_PRIORITY_KEYWORDS = (
+    "metal",
+    "metalurg",
+    "herrer",
+    "rejas",
+    "portones",
+    "carrocer",
+    "chapist",
+    "construct",
+    "arquitect",
+)
+
+
+def _is_metal_priority_nicho(nicho: str) -> bool:
+    text = (nicho or "").lower()
+    return any(kw in text for kw in METAL_PRIORITY_KEYWORDS)
+
 # =============================================================================
 # LISTAS DE ROTACIÓN AUTOMÁTICA
 # =============================================================================
@@ -1596,9 +1614,9 @@ class DomainHunterWorker:
     # =============================================================================
     
     async def _get_next_combination_to_search(self, user_id: str) -> Optional[dict]:
-        """Obtiene la próxima combinación no agotada. Prioriza nichos Assistify (clases, gimnasios, etc.)."""
+        """Obtiene la próxima combinación no agotada priorizando nichos metal/B2B para email."""
         try:
-            # Traer varias combinaciones para priorizar las que coinciden con Assistify
+            # Traer varias combinaciones para priorizar nichos de Metalwailers/Botlode.
             response = self.supabase.table("domain_search_tracking")\
                 .select("*")\
                 .eq("user_id", user_id)\
@@ -1608,11 +1626,12 @@ class DomainHunterWorker:
                 .execute()
             
             if response.data:
-                # Ordenar: primero Assistify (para ofrecer app de paso), luego por current_page
+                # Ordenar: primero metal/B2B (email), luego no-assistify, luego Assistify.
                 def _sort_key(row):
                     nicho = (row.get("nicho") or "").lower()
-                    is_assistify = 0 if _is_assistify_nicho(nicho) else 1
-                    return (is_assistify, row.get("current_page") or 0)
+                    is_metal_priority = 0 if _is_metal_priority_nicho(nicho) else 1
+                    is_assistify = 1 if _is_assistify_nicho(nicho) else 0
+                    return (is_metal_priority, is_assistify, row.get("current_page") or 0)
                 sorted_rows = sorted(response.data, key=_sort_key)
                 return sorted_rows[0]
             
@@ -1630,8 +1649,9 @@ class DomainHunterWorker:
             if response.data:
                 def _sort_key(row):
                     nicho = (row.get("nicho") or "").lower()
-                    is_assistify = 0 if _is_assistify_nicho(nicho) else 1
-                    return (is_assistify, row.get("current_page") or 0)
+                    is_metal_priority = 0 if _is_metal_priority_nicho(nicho) else 1
+                    is_assistify = 1 if _is_assistify_nicho(nicho) else 0
+                    return (is_metal_priority, is_assistify, row.get("current_page") or 0)
                 sorted_rows = sorted(response.data, key=_sort_key)
                 return sorted_rows[0]
             
@@ -1681,7 +1701,8 @@ class DomainHunterWorker:
         """
         try:
             nichos_pool, paises_pool, user_ciudades = self._get_user_search_params(user_id)
-            nicho = random.choice(nichos_pool)
+            # Priorizar el primer nicho del pool (user_nicho si existe; si no, lista global priorizada).
+            nicho = nichos_pool[0] if nichos_pool else "constructoras"
             pais = random.choice(paises_pool)
             
             if user_ciudades:
