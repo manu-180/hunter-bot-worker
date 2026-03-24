@@ -234,15 +234,17 @@ class LeadSniperWorker:
           - Encola contactos del pool que aún no recibieron su email (populate_email_queue)
           - Envía los pendientes de email_queue con sus credenciales propias
 
-        Respeta horario laboral (Argentina) y límite warm-up.
+        El encolado corre 24/7. El envío respeta horario laboral (Argentina), salvo override.
         """
-        # 🕐 VERIFICAR HORARIO LABORAL (DST-aware), salvo override para pruebas 24/7
-        if not IGNORE_BUSINESS_HOURS and not is_business_hours(BUSINESS_HOURS_START, BUSINESS_HOURS_END):
+        in_business_hours = IGNORE_BUSINESS_HOURS or is_business_hours(
+            BUSINESS_HOURS_START,
+            BUSINESS_HOURS_END,
+        )
+        if not in_business_hours:
             log.warning(
                 f"⏸️  FUERA DE HORARIO LABORAL (Argentina: {format_argentina_time()}). "
-                f"Pausando envío de emails hasta las {BUSINESS_HOURS_START}:00 AM..."
+                f"Se encola 24/7, pero el envío queda pausado hasta las {BUSINESS_HOURS_START}:00 AM..."
             )
-            return 0
 
         # Obtener todos los usuarios con bot activo y configuración completa
         active_configs = self.repo.get_all_active_configs()
@@ -250,6 +252,9 @@ class LeadSniperWorker:
             return 0
 
         total_sent = 0
+        total_enqueued = 0
+        blocked_users = 0
+        blocked_pending = 0
 
         for config in active_configs:
             user_id = str(config.user_id)
@@ -267,10 +272,22 @@ class LeadSniperWorker:
                 config=config,
                 limit=self.email_batch_size * 5,
             )
+            total_enqueued += new_queued
             if new_queued:
                 log.info(f"[{tag}] {new_queued} nuevos contactos encolados para envío")
             else:
                 log.info(f"[{tag}] 0 nuevos contactos encolados (nicho={config.nicho!r})")
+            log.info(f"[{tag}] METRIC encolados_por_usuario={new_queued}")
+
+            # Fuera de horario: encola, pero no envía.
+            if not in_business_hours:
+                blocked_users += 1
+                pending_now = self.repo.count_pending_email_queue_for_user(user_id=user_id)
+                blocked_pending += pending_now
+                log.info(
+                    f"[{tag}] Envío pausado por horario. Encolado activo (pending={pending_now})."
+                )
+                continue
 
             # Leer cola de envío de este usuario
             queue_items = self.repo.fetch_email_queue_for_user(
@@ -371,7 +388,16 @@ class LeadSniperWorker:
                             lead_id=str(item.id),
                         )
 
-        return total_sent
+        if not in_business_hours and blocked_users > 0:
+            log.info(
+                "[Horario] bloqueados_por_horario=%s | pending_total=%s | encolados_nuevos=%s",
+                blocked_users,
+                blocked_pending,
+                total_enqueued,
+            )
+
+        # Cuenta trabajo real tanto al encolar como al enviar.
+        return total_sent + total_enqueued
 
     async def _log_heartbeat(self) -> None:
         """Log periodic heartbeat con stats del nuevo modelo contacts + email_queue."""
@@ -385,6 +411,18 @@ class LeadSniperWorker:
             except Exception:
                 email_pending = 0
             log.heartbeat(contacts_pending, email_pending)
+            try:
+                done_r = (
+                    self.repo.client.table("contacts")
+                    .select("id", count="exact")
+                    .eq("scrape_status", "done")
+                    .not_.is_("email", "null")
+                    .execute()
+                )
+                scrape_done_con_email = done_r.count or 0
+            except Exception:
+                scrape_done_con_email = 0
+            log.info(f"METRIC scrape_done_con_email={scrape_done_con_email}")
         except Exception as e:
             log.warning(f"Error obteniendo estadísticas: {e}")
 

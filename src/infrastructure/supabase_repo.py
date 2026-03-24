@@ -6,8 +6,9 @@ implementing the Repository pattern for clean separation of concerns.
 """
 
 import os
+import unicodedata
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 from uuid import UUID
 
 from supabase import create_client, Client
@@ -21,6 +22,96 @@ from src.utils.logger import log
 
 # Maximum time a lead can stay in a transient state before being considered stuck
 STUCK_LEAD_TIMEOUT_MINUTES = 15
+
+_INDUSTRY_ALIASES: Dict[str, List[str]] = {
+    "metalurgica": [
+        "metalurgica",
+        "metalurgicas",
+        "industria metalurgica",
+        "industrias metalurgicas",
+        "metalmecanica",
+        "metalmecanico",
+        "taller metalmecanico",
+        "talleres metalmecanicos",
+    ],
+    "herreria": [
+        "herreria",
+        "herrerias",
+        "rejas y portones",
+        "estructuras metalicas",
+        "carpinteria metalica",
+    ],
+    "carroceria": [
+        "carroceria",
+        "carrocerias",
+        "chapista",
+        "chapistas",
+        "carroceria camiones",
+    ],
+    "constructora": [
+        "constructora",
+        "constructoras",
+        "construccion industrial",
+        "arquitectura",
+        "estudios de arquitectura",
+    ],
+}
+
+
+def _normalize_text(value: Optional[str]) -> str:
+    if not value:
+        return ""
+    text = unicodedata.normalize("NFKD", value)
+    text = "".join(ch for ch in text if not unicodedata.combining(ch))
+    return text.strip().lower()
+
+
+def _expand_industry_filters(raw_filters: List[str]) -> List[str]:
+    expanded: List[str] = []
+    for raw in raw_filters:
+        base = _normalize_text(raw)
+        if not base:
+            continue
+        expanded.append(base)
+        for _, aliases in _INDUSTRY_ALIASES.items():
+            if any(base in alias or alias in base for alias in aliases):
+                expanded.extend(aliases)
+    # deduplicado preservando orden
+    unique: List[str] = []
+    seen = set()
+    for item in expanded:
+        if item not in seen:
+            seen.add(item)
+            unique.append(item)
+    return unique
+
+
+def _matches_industry(industry_value: Optional[str], expanded_filters: List[str]) -> bool:
+    if not expanded_filters:
+        return True
+    value = _normalize_text(industry_value)
+    if not value:
+        return False
+    return any(f in value or value in f for f in expanded_filters)
+
+
+def _contact_priority(row: Dict[str, Any]) -> tuple:
+    """Mayor prioridad: source business y scrape más reciente."""
+    source = str(row.get("source") or "")
+    source_rank = 0 if source == "finder_business" else 1
+    scraped_at = str(row.get("scraped_at") or "")
+    created_at = str(row.get("created_at") or "")
+
+    def _to_ts(value: str) -> float:
+        if not value:
+            return 0.0
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+        except Exception:
+            return 0.0
+
+    # Orden ascendente por tuple: source_rank menor primero; timestamps más nuevos primero.
+    return (source_rank, -_to_ts(scraped_at), -_to_ts(created_at))
 
 
 class SupabaseRepository:
@@ -588,11 +679,12 @@ class SupabaseRepository:
                 .select("*")
                 .eq("scrape_status", ContactScrapeStatus.NEEDS_SCRAPING.value)
                 .not_.is_("domain", "null")
-                .order("created_at", desc=False)
-                .limit(limit)
+                .order("created_at", desc=True)
+                .limit(limit * 5)
                 .execute()
             )
-            return [Contact(**row) for row in r.data]
+            rows = sorted((r.data or []), key=_contact_priority)[:limit]
+            return [Contact(**row) for row in rows]
         except Exception as e:
             log.error(f"Error en fetch_contacts_to_scrape: {e}")
             return []
@@ -713,7 +805,7 @@ class SupabaseRepository:
             # Construir query base: contactos con email listo
             q = (
                 self.client.table("contacts")
-                .select("id")
+                .select("id, industry, city, source, scraped_at, created_at")
                 .eq("scrape_status", ContactScrapeStatus.DONE.value)
                 .not_.is_("email", "null")
                 .not_.is_("domain", "null")
@@ -723,13 +815,14 @@ class SupabaseRepository:
             # Si hay segmentos y el filtro deja 0 contactos, se hace fallback sin segmento
             # para que el usuario no quede en 0 pendientes (p. ej. BotLode vs Metal Wailers).
             used_segment_filter = False
+            wanted_industries_raw: List[str] = []
             if segments:
                 seg = segments[0]
                 industries = seg.get("industries")
                 cities = seg.get("cities")
                 has_domain = seg.get("has_domain")
                 if industries:
-                    q = q.in_("industry", industries)
+                    wanted_industries_raw.extend([str(x) for x in industries if x])
                     used_segment_filter = True
                 if cities:
                     q = q.in_("city", cities)
@@ -741,24 +834,41 @@ class SupabaseRepository:
                         q = q.is_("domain", "null")
                     used_segment_filter = True
             elif config.nicho:
-                q = q.eq("industry", config.nicho)
+                wanted_industries_raw.append(str(config.nicho))
 
-            contacts_r = q.limit(limit * 3).execute()  # buscar más para compensar exclusiones
-            all_contact_ids = [row["id"] for row in (contacts_r.data or [])]
+            expanded_industries = _expand_industry_filters(wanted_industries_raw)
+
+            contacts_r = q.limit(limit * 6).execute()  # buscar más para compensar exclusiones
+            contact_rows = contacts_r.data or []
+            if expanded_industries:
+                contact_rows = [
+                    row for row in contact_rows
+                    if _matches_industry(row.get("industry"), expanded_industries)
+                ]
+            contact_rows = sorted(contact_rows, key=_contact_priority)
+            all_contact_ids = [row["id"] for row in contact_rows]
 
             # Fallback: si teníamos filtro por segmento y no hay candidatos, reintentar sin segmento
             if not all_contact_ids and used_segment_filter:
                 q_fallback = (
                     self.client.table("contacts")
-                    .select("id")
+                    .select("id, industry, city, source, scraped_at, created_at")
                     .eq("scrape_status", ContactScrapeStatus.DONE.value)
                     .not_.is_("email", "null")
                     .not_.is_("domain", "null")
                 )
-                if config.nicho:
-                    q_fallback = q_fallback.eq("industry", config.nicho)
-                contacts_r = q_fallback.limit(limit * 3).execute()
-                all_contact_ids = [row["id"] for row in (contacts_r.data or [])]
+                contacts_r = q_fallback.limit(limit * 6).execute()
+                fallback_rows = contacts_r.data or []
+                fallback_industries = _expand_industry_filters(
+                    [str(config.nicho)] if config.nicho else []
+                )
+                if fallback_industries:
+                    fallback_rows = [
+                        row for row in fallback_rows
+                        if _matches_industry(row.get("industry"), fallback_industries)
+                    ]
+                contact_rows = sorted(fallback_rows, key=_contact_priority)
+                all_contact_ids = [row["id"] for row in contact_rows]
 
             if not all_contact_ids:
                 return 0
@@ -842,6 +952,21 @@ class SupabaseRepository:
             log.error(f"Error en fetch_email_queue_for_user(user={user_id}): {e}")
             return []
 
+    def count_pending_email_queue_for_user(self, user_id: str) -> int:
+        """Cuenta ítems pendientes de email_queue para un usuario."""
+        try:
+            r = (
+                self.client.table("email_queue")
+                .select("id", count="exact")
+                .eq("user_id", user_id)
+                .eq("status", EmailQueueStatus.PENDING.value)
+                .execute()
+            )
+            return r.count or 0
+        except Exception as e:
+            log.error(f"Error en count_pending_email_queue_for_user(user={user_id}): {e}")
+            return 0
+
     def mark_queue_item_sending(self, queue_id: UUID) -> bool:
         try:
             r = (
@@ -902,18 +1027,22 @@ class SupabaseRepository:
         from_number: str,
     ) -> None:
         """
-        Inserta el WPP de seguimiento en whatsapp_outbox para que quede visible
-        en el Sender Bot como un mensaje enviado por el usuario.
+        Inserta el WPP de seguimiento en whatsapp_outbox para auditoría / RPC.
+
+        source=wpp_followup: mismo criterio que twilio-webhook (placeholder
+        "Lo contacté por Botlode") y distinto de la fila feeder (contacts + pending).
+        feature=empresas: coherente con outbox y get_last_sent_contact.
         """
         try:
             from datetime import timezone
             self.client.table("whatsapp_outbox").upsert(
                 {
                     "user_id": user_id,
-                    "source": "contacts",
+                    "source": "wpp_followup",
                     "source_id": contact_id,
                     "nombre": company_name,
                     "telefono": phone,
+                    "feature": "empresas",
                     "from_number": from_number,
                     "status": "sent",
                     "sent_at": datetime.now(timezone.utc).isoformat(),
